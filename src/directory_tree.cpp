@@ -222,6 +222,21 @@ std::string DirectoryTree::FindFile(std::string_view directory, std::string_view
 	return FindFile({ FileFinder::MakePath(directory, filename), exts });
 }
 
+// RocketRPG: names decoded with the wrong codepage contain U+FFFD where a byte pair has no mapping, while the
+// file on disk (extracted on another locale) has some other character there, often '_'. Let each U+FFFD match
+// exactly one character (1-4 bytes) so such assets are still found.
+static bool rr_replacement_match(std::string_view pat, std::string_view text) {
+	static const std::string_view rep = "\xEF\xBF\xBD";
+	if (pat.empty()) return text.empty();
+	if (pat.substr(0, 3) == rep) {
+		for (size_t n = 1; n <= 4 && n <= text.size(); ++n) {
+			if (rr_replacement_match(pat.substr(3), text.substr(n))) return true;
+		}
+		return false;
+	}
+	return !text.empty() && pat[0] == text[0] && rr_replacement_match(pat.substr(1), text.substr(1));
+}
+
 std::string DirectoryTree::FindFile(const DirectoryTree::Args& args) const {
 	std::string dir, name, canonical_path;
 	// Few games (e.g. Yume2kki) use path traversal (..) in the filenames to point
@@ -260,6 +275,21 @@ std::string DirectoryTree::FindFile(const DirectoryTree::Args& args) const {
 			if (entry_it != entries->end() && entry_it->second.type == FileType::Regular) {
 				auto full_path = FileFinder::MakePath(dir_it->second, entry_it->second.name);
 				DebugLog("FindFile Found: {} | {} | {}", dir, name, full_path);
+				return full_path;
+			}
+		}
+	}
+
+	if (name_key.find("\xEF\xBF\xBD") != std::string::npos) {
+		for (const auto& e : *entries) {
+			if (e.second.type != FileType::Regular) continue;
+			bool ok = args.exts.empty() && rr_replacement_match(name_key, e.first);
+			for (const auto& ext : args.exts) {
+				ok = ok || rr_replacement_match(name_key + ToString(ext), e.first);
+			}
+			if (ok) {
+				auto full_path = FileFinder::MakePath(dir_it->second, e.second.name);
+				Output::Debug("FindFile: {}/{} matched {} (undecodable characters)", dir, name, e.second.name);
 				return full_path;
 			}
 		}

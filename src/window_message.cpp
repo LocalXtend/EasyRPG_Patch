@@ -38,6 +38,7 @@
 #include "font.h"
 #include "cache.h"
 #include "text.h"
+#include "rocket_bridge.h"
 
 // FIXME: Off by 1 bug in window base class
 constexpr int message_animation_frames = 7;
@@ -145,6 +146,7 @@ void Window_Message::StartMessageProcessing(PendingMessage pm) {
 	}
 
 	const auto& lines = pending_message.GetLines();
+	RocketBridge::OnMessageStart(lines, pending_message.HasChoices() ? pending_message.GetNumChoices() : 0);
 
 	int num_lines = 0;
 	auto append = [&](const std::string& line) {
@@ -357,6 +359,7 @@ void Window_Message::InsertNewLine() {
 
 void Window_Message::FinishMessageProcessing() {
 	DebugLog("{}: FINISH MSG");
+	RocketBridge::OnMessageEnd();
 	text.clear();
 	text_index = text.data();
 
@@ -458,7 +461,7 @@ void Window_Message::UpdateMessage() {
 	// Message Box Show Message rendering loop
 	bool instant_speed_forced = false;
 
-	if (Player::debug_flag && Input::IsPressed(Input::SHIFT)) {
+	if ((Player::debug_flag && Input::IsPressed(Input::SHIFT)) || RocketBridge::Skip()) {
 		instant_speed = true;
 		instant_speed_forced = true;
 	}
@@ -778,7 +781,8 @@ void Window_Message::UpdateCursorRect() {
 
 void Window_Message::WaitForInput() {
 	if (Input::IsTriggered(Input::DECISION) ||
-			Input::IsTriggered(Input::CANCEL)) {
+			Input::IsTriggered(Input::CANCEL) ||
+			RocketBridge::WantAdvance()) {
 		SetPause(false);
 	}
 }

@@ -79,6 +79,13 @@ public:
 
 	void Start() override;
 
+	/**
+	 * RocketRPG autotest: win the battle like the debug "Win" option, but only while the battle is waiting in its
+	 * option / command menus (not mid-action or while a target window is open).
+	 * @return whether the battle was ended
+	 */
+	bool RocketForceVictory();
+
 	void CreateOptions();
 
 	void UpdateScreen();

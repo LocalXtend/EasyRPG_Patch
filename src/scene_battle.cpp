@@ -632,3 +632,9 @@ void Scene_Battle::EndBattle(BattleResult result) {
 	}
 }
 
+bool Scene_Battle::RocketForceVictory() {
+	if (state != State_SelectOption && state != State_SelectActor && state != State_SelectCommand) return false;
+	for (Game_Enemy* enemy : Main_Data::game_enemyparty->GetEnemies()) enemy->Kill();
+	SetState(State_Victory);
+	return true;
+}

@@ -273,6 +273,8 @@ add_library(${PROJECT_NAME} OBJECT
 	src/platform.h
 	src/platform/clock.h
 	src/player.cpp
+	src/rocket_bridge.cpp
+	src/rocket_bridge.h
 	src/player.h
 	src/point.h
 	src/rand.cpp

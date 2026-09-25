@@ -67,8 +67,9 @@ std::streambuf* NativeFilesystem::CreateInputStreambuffer(std::string_view path,
 	auto buf = new std::filebuf();
 
 	buf->open(
-#ifdef _MSC_VER
-		Utils::ToWideString(path),
+#ifdef _WIN32
+		// RocketRPG: MinGW builds must open wide paths too, or files under non-ASCII (e.g. Korean) folders fail to load.
+		Utils::ToWideString(path).c_str(),
 #else
 		ToString(path),
 #endif
@@ -100,8 +101,9 @@ std::streambuf* NativeFilesystem::CreateOutputStreambuffer(std::string_view path
 #else
 	auto* buf = new std::filebuf();
 	buf->open(
-#ifdef _MSC_VER
-		Utils::ToWideString(path),
+#ifdef _WIN32
+		// RocketRPG: MinGW builds must open wide paths too, or files under non-ASCII (e.g. Korean) folders fail to load.
+		Utils::ToWideString(path).c_str(),
 #else
 		ToString(path),
 #endif

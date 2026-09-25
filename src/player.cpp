@@ -93,6 +93,7 @@
 #ifndef EMSCRIPTEN
 // This is not used on Emscripten.
 #include "exe_reader.h"
+#include "rocket_bridge.h"
 #endif
 
 using namespace std::chrono_literals;
@@ -241,6 +242,16 @@ void Player::MainLoop() {
 		return;
 	}
 
+	RocketBridge::Tick();
+	if (RocketBridge::Paused()) {
+		// 일시 정지: 장면을 갱신하지 않고 현재 화면만 계속 그립니다. 재개 시 따라잡기 없이 시간 기준을 초기화합니다.
+		Input::UpdateSystem();
+		Player::Draw();
+		Game_Clock::ResetFrame(Game_Clock::now());
+		Game_Clock::SleepFor(std::chrono::milliseconds(16));
+		return;
+	}
+
 	int num_updates = 0;
 	while (Game_Clock::NextGameTimeStep()) {
 		if (num_updates > 0) {
@@ -327,7 +338,7 @@ void Player::UpdateInput() {
 	if (Input::IsSystemPressed(Input::FAST_FORWARD_B)) {
 		speed = Input::GetInputSource()->GetConfig().speed_modifier_b.Get();
 	}
-	Game_Clock::SetGameSpeedFactor(speed);
+	Game_Clock::SetGameSpeedFactor(speed * RocketBridge::SpeedFactor());
 
 	if (Main_Data::game_quit) {
 		reset_flag |= Main_Data::game_quit->ShouldQuit();
@@ -356,6 +367,9 @@ void Player::Update(bool update_scene) {
 
 	Audio().Update();
 	Input::Update();
+	if (update_scene) {
+		RocketBridge::LogicTick();
+	}
 
 	// Game events can query full screen status and change their behavior, so this needs to
 	// be a game key and not a system key.
@@ -382,6 +396,7 @@ void Player::Update(bool update_scene) {
 		}
 
 		Scene::instance->Update();
+		RocketBridge::PostUpdate();
 	}
 
 #if defined(__ANDROID__) && !defined(USE_LIBRETRO)
@@ -392,6 +407,7 @@ void Player::Update(bool update_scene) {
 void Player::Draw() {
 	Graphics::Update();
 	Graphics::Draw(*DisplayUi->GetDisplaySurface());
+	RocketBridge::ApplyBrightness(*DisplayUi->GetDisplaySurface());
 	DisplayUi->UpdateDisplay();
 }
 

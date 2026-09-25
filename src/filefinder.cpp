@@ -411,6 +411,45 @@ int FileFinder::GetSavegames() {
 	return false;
 }
 
+// RocketRPG: many Korean translations keep the Japanese RTP/asset names in their data. With the game read as
+// CP949 those names become Hangul gibberish and nothing is found. When a lookup fails, turn the name back into
+// the game's codepage bytes and read them with the other CJK codepage (CP949 <-> CP932), then look again.
+#ifdef _WIN32
+#include <windows.h>
+static std::string rr_alt_codepage_name(std::string_view name) {
+	const std::string& enc = Player::encoding;
+	UINT from = 0, to = 0;
+	if (enc.find("949") != std::string::npos) { from = 949; to = 932; }
+	else if (enc.find("932") != std::string::npos) { from = 932; to = 949; }
+	else return {};
+	bool ascii = true;
+	for (unsigned char c : name) if (c >= 0x80) { ascii = false; break; }
+	if (ascii) return {};
+	std::wstring w = Utils::ToWideString(name);
+	BOOL lossy = FALSE;
+	int n = WideCharToMultiByte(from, WC_NO_BEST_FIT_CHARS, w.c_str(), (int)w.size(), nullptr, 0, nullptr, &lossy);
+	if (n <= 0 || lossy) return {};
+	std::string bytes(n, '\0');
+	WideCharToMultiByte(from, WC_NO_BEST_FIT_CHARS, w.c_str(), (int)w.size(), bytes.data(), n, nullptr, &lossy);
+	int m = MultiByteToWideChar(to, MB_ERR_INVALID_CHARS, bytes.data(), n, nullptr, 0);
+	if (m <= 0) return {};
+	std::wstring w2(m, L'\0');
+	MultiByteToWideChar(to, 0, bytes.data(), n, w2.data(), m);
+	return Utils::FromWideString(w2);
+}
+#else
+static std::string rr_alt_codepage_name(std::string_view) { return {}; }
+#endif
+
+static std::string rr_find_alt(std::string_view dir, std::string_view name, Span<const std::string_view> exts) {
+	std::string alt = rr_alt_codepage_name(name);
+	if (alt.empty() || alt == name) return {};
+	DirectoryTree::Args a = { FileFinder::MakePath(dir, alt), exts, 1, false };
+	std::string found = FileFinder::Game().FindFile(a);
+	if (!found.empty()) Output::Debug("Found {}/{} as {} (Japanese/Korean name mix)", dir, name, alt);
+	return found;
+}
+
 std::string find_generic(const DirectoryTree::Args& args) {
 	if (!Tr::GetCurrentTranslationId().empty()) {
 		auto tr_fs = Tr::GetCurrentTranslationFilesystem();
@@ -442,18 +481,21 @@ std::string find_generic_with_fallback(DirectoryTree::Args& args) {
 
 std::string FileFinder::FindImage(std::string_view dir, std::string_view name) {
 	DirectoryTree::Args args = { MakePath(dir, name), IMG_TYPES, 1, false };
-	return find_generic(args);
+	auto r = find_generic(args);
+	return r.empty() ? rr_find_alt(dir, name, IMG_TYPES) : r;
 }
 
 std::string FileFinder::FindMusic(std::string_view name) {
 	DirectoryTree::Args args = { MakePath("Music", name), MUSIC_TYPES, 1, false };
-	return find_generic(args);
+	auto r = find_generic(args);
+	return r.empty() ? rr_find_alt("Music", name, MUSIC_TYPES) : r;
 
 }
 
 std::string FileFinder::FindSound(std::string_view name) {
 	DirectoryTree::Args args = { MakePath("Sound", name), SOUND_TYPES, 1, false };
-	return find_generic(args);
+	auto r = find_generic(args);
+	return r.empty() ? rr_find_alt("Sound", name, SOUND_TYPES) : r;
 }
 
 std::string FileFinder::FindFont(std::string_view name) {
@@ -473,9 +515,19 @@ Filesystem_Stream::InputStream open_generic(std::string_view dir, std::string_vi
 	auto is = FileFinder::Game().OpenFile(args);
 	if (!is && Main_Data::filefinder_rtp) {
 		is = Main_Data::filefinder_rtp->Lookup(dir, name, args.exts);
-		if (!is) {
-			Output::Debug("Cannot find: {}/{}", dir, name);
+	}
+	if (!is) {
+		// Japanese/Korean name mix: retry the other codepage in the game folder, then the RTP.
+		std::string alt = rr_alt_codepage_name(name);
+		if (!alt.empty() && alt != name) {
+			DirectoryTree::Args a = { FileFinder::MakePath(dir, alt), args.exts, 1, false };
+			is = FileFinder::Game().OpenFile(a);
+			if (!is && Main_Data::filefinder_rtp) is = Main_Data::filefinder_rtp->Lookup(dir, alt, args.exts);
+			if (is) Output::Debug("Opened {}/{} as {} (Japanese/Korean name mix)", dir, name, alt);
 		}
+	}
+	if (!is && Main_Data::filefinder_rtp) {
+		Output::Debug("Cannot find: {}/{}", dir, name);
 	}
 	return is;
 }
