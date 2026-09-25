@@ -19,3 +19,6 @@ CMakePresets.json -diff linguist-generated
 builds/android/app/src/main/java/org/libsdl/app/*.java -diff linguist-vendored
 builds/android/app/src/main/java/org/libsdl/app/SDLActivity.java diff
 src/generated/* -diff linguist-generated
+
+rocketrpg/*.sh text eol=lf
+rocketrpg/*.ps1 text eol=crlf

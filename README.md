@@ -1,3 +1,7 @@
+> **RocketRPG edition.** This is EasyRPG Player 0.8.1.1 modified for [RocketRPG](https://github.com/LocalXtend/RocketRPG-Release)
+> (RPG Maker 2000/2003 support). What changed and how to build it: [rocketrpg/README.md](rocketrpg/README.md).
+> The original project is https://github.com/EasyRPG/Player.
+
 # EasyRPG Player
 
 EasyRPG Player is a game interpreter to play RPG Maker 2000, 2003 and EasyRPG

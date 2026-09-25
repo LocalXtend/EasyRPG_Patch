@@ -146,3 +146,6 @@ eboot.bin
 *.pem
 *.keystore
 *.jks
+
+# RocketRPG build folder
+/rocketrpg/work/
