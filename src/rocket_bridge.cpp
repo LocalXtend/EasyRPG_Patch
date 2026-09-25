@@ -176,6 +176,8 @@ void SendLine(const std::string& kind, const std::string& payload = {}) {
 		ClosePipe();
 		return;
 	}
+	// 카메라("C")는 매 프레임 보내므로 답을 기다리지 않습니다 (RocketRPG도 답하지 않음) — 게임 루프가 파이프 왕복을 기다리지 않게.
+	if (kind == "C") return;
 	std::string reply;
 	if (!ReadLine(reply)) {
 		ClosePipe();
@@ -353,8 +355,8 @@ double WrapTiles(double d, bool loop, int size) {
 	return d - 4.0;
 }
 
-void SendEsp() {
-	if (!OnMap()) return;
+bool SendEsp() {
+	if (!OnMap()) return false;
 	int ox, oy;
 	RenderOffset(ox, oy);
 	const double cx = Game_Map::GetDisplayX() / double(SCREEN_TILE_SIZE);
@@ -384,6 +386,7 @@ void SendEsp() {
 		o << ev.GetId() << ',' << tx << ',' << ty << ',' << static_cast<int>(ev.GetTrigger()) << ',' << name;
 	}
 	SendLine("E", o.str());
+	return true;
 }
 
 void SendTile() {
@@ -685,16 +688,21 @@ void Tick() {
 	Connect();
 	if (st.pipe == INVALID_HANDLE_VALUE) return;
 #endif
+	// 파이프 왕복은 게임 루프를 잠깐 멈추므로 최소로: ESP가 켜져 있으면 3프레임마다 ESP 한 번,
+	// 아니면 6프레임마다 텔레메트리(바뀐 경우) 또는 하트비트 한 번. 답에 실려 오는 명령은 이 왕복으로 받습니다.
 	if (st.frame % 3 == 0) {
-		auto t = Telemetry();
-		if (t != st.last_telemetry) {
-			st.last_telemetry = t;
-			SendLine("T", t);
-		} else {
-			SendLine("H");
+		bool sent = false;
+		if (st.esp && SendEsp()) sent = true;
+		if (st.has_mouse && st.frame % 6 == 3) { SendTile(); sent = true; }
+		if (st.frame % 6 == 0) {
+			auto t = Telemetry();
+			if (t != st.last_telemetry) {
+				st.last_telemetry = t;
+				SendLine("T", t);
+				sent = true;
+			}
+			if (!sent) SendLine("H");
 		}
-		if (st.esp && st.frame % 6 == 0) SendEsp();
-		if (st.has_mouse && st.frame % 6 == 3) SendTile();
 	}
 	if (st.esp) SendCamera();
 }
