@@ -17,6 +17,7 @@
 
 // Headers
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <type_traits>
 #include <vector>
@@ -328,6 +329,21 @@ bool FTFont::IsOk() const {
 	return face;
 }
 
+namespace {
+// RocketRPG: RR_EASYRPG_FONT_AA=1 이면 글자를 안티에일리어싱(8비트 회색)으로 그립니다. 기본은 원래처럼 흑백 픽셀.
+bool RrFontAA() {
+	static const bool aa = [] { const char* v = std::getenv("RR_EASYRPG_FONT_AA"); return v && v[0] == '1'; }();
+	return aa;
+}
+FT_Int32 RrLoadFlags() {
+	// 부드럽게: 작은 크기용 내장 비트맵(굴림·바탕 등)은 흑백이라 윤곽선으로 그립니다
+	return RrFontAA() ? (FT_LOAD_TARGET_LIGHT | FT_LOAD_NO_BITMAP) : (FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO);
+}
+FT_Render_Mode RrRenderMode() {
+	return RrFontAA() ? FT_RENDER_MODE_NORMAL : FT_RENDER_MODE_MONO;
+}
+} // namespace
+
 Rect FTFont::vGetSize(char32_t glyph) const {
 	auto glyph_index = FT_Get_Char_Index(face, glyph);
 
@@ -355,10 +371,10 @@ Rect FTFont::vGetSize(char32_t glyph) const {
 		// When it is a color font check if the glyph is a color glyph
 		// If it is not then reload the glyph monochrome
 		if (face->glyph->bitmap.pixel_mode != FT_PIXEL_MODE_BGRA) {
-			load_glyph(FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO);
+			load_glyph(RrLoadFlags());
 		}
 	} else {
-		if (!load_glyph(FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO)) {
+		if (!load_glyph(RrLoadFlags())) {
 			if (fallback_font) {
 				return fallback_font->vGetSize(glyph);
 			} else {
@@ -426,10 +442,10 @@ Font::GlyphRet FTFont::vRenderShaped(char32_t glyph) const {
 		// If it is not then rerender the glyph monochrome
 		// FIXME: This is inefficient
 		if (face->glyph->bitmap.pixel_mode != FT_PIXEL_MODE_BGRA) {
-			render_glyph(FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO, FT_RENDER_MODE_MONO);
+			render_glyph(RrLoadFlags(), RrRenderMode());
 		}
 	} else {
-		if (!render_glyph(FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO, FT_RENDER_MODE_MONO)) {
+		if (!render_glyph(RrLoadFlags(), RrRenderMode())) {
 			if (fallback_font) {
 				return fallback_font->vRender(glyph);
 			} else {
@@ -441,7 +457,7 @@ Font::GlyphRet FTFont::vRenderShaped(char32_t glyph) const {
 	FT_GlyphSlot slot = face->glyph;
 	FT_Bitmap* ft_bitmap = &slot->bitmap;
 
-	assert(ft_bitmap->pixel_mode == FT_PIXEL_MODE_MONO || ft_bitmap->pixel_mode == FT_PIXEL_MODE_BGRA);
+	assert(ft_bitmap->pixel_mode == FT_PIXEL_MODE_MONO || ft_bitmap->pixel_mode == FT_PIXEL_MODE_GRAY || ft_bitmap->pixel_mode == FT_PIXEL_MODE_BGRA);
 
 	size_t const pitch = std::abs(ft_bitmap->pitch);
 	const int width = ft_bitmap->width;
@@ -453,6 +469,16 @@ Font::GlyphRet FTFont::vRenderShaped(char32_t glyph) const {
 	if (ft_bitmap->pixel_mode == FT_PIXEL_MODE_BGRA) {
 		bm = Bitmap::Create(ft_bitmap->buffer, width, height, 0, format_B8G8R8A8_a().format());
 		has_color = true;
+	} else if (ft_bitmap->pixel_mode == FT_PIXEL_MODE_GRAY) {
+		// RocketRPG: 안티에일리어싱 글자 (회색 값을 그대로 마스크 알파로)
+		bm = Bitmap::Create(width, height);
+		auto* data = reinterpret_cast<uint32_t*>(bm->pixels());
+		for (int row = 0; row < height; ++row) {
+			for (int col = 0; col < width; ++col) {
+				unsigned c = ft_bitmap->buffer[pitch * row + col];
+				data[row * width + col] = (c << 24) + (c << 16) + (c << 8) + c;
+			}
+		}
 	} else {
 		bm = Bitmap::Create(width, height);
 		auto* data = reinterpret_cast<uint32_t*>(bm->pixels());
