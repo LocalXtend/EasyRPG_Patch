@@ -136,6 +136,9 @@ private:
 
 	Rect window_mode_metrics;
 	SDL_Rect viewport = {};
+
+	/** RocketRPG: draws ESP name labels at window resolution. */
+	void DrawRocketEspLabels();
 	struct {
 		int width = 0;
 		int height = 0;

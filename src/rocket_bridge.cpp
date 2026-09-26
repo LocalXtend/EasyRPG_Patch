@@ -84,6 +84,8 @@ struct State {
 	BitmapRef white;
 	std::map<int, BitmapRef> esp_labels; // 이벤트 id -> 이름표 (맵이 바뀌면 비움)
 	int esp_map = -1;
+	int esp_generation = 0;
+	std::vector<RocketBridge::EspLabel> esp_frame; // 이번 프레임에 보일 이름표
 
 	bool msg_busy = false;
 	std::string msg_text;
@@ -728,10 +730,12 @@ int TriggerClass(int trigger) {
 // ESP: RocketRPG 창 위 투명 창에 그리면 매 프레임 창 전체를 다시 합성해야 해서 걸을 때 크게 버벅였습니다.
 // 게임 화면에 직접 그리면 캐릭터와 정확히 같은 프레임에 움직이고 비용도 거의 없습니다.
 void DrawEsp(Bitmap& surface) {
+	st.esp_frame.clear();
 	if (!st.esp || !OnMap()) return;
 	if (Game_Map::GetMapId() != st.esp_map) {
 		st.esp_labels.clear();
 		st.esp_map = Game_Map::GetMapId();
+		++st.esp_generation;
 	}
 	static const Color pal[5] = {
 		Color(0, 153, 255, 255), Color(0, 204, 68, 255), Color(255, 136, 0, 255), Color(187, 51, 255, 255), Color(0, 255, 255, 255)
@@ -740,8 +744,6 @@ void DrawEsp(Bitmap& surface) {
 	RenderOffset(ox, oy);
 	const int sw = surface.GetWidth(), sh = surface.GetHeight();
 	FontRef font;
-	// 게임 해상도(320x240)에서는 12px 이름표도 커서, 겹치는 이름표는 먼저 그린 것만 보여 줍니다 (상자는 모두 그림).
-	std::vector<Rect> placed;
 	for (auto& ev : Game_Map::GetEvents()) {
 		if (!ev.IsActive()) continue;
 		const int x = ev.GetScreenX() - TILE_SIZE / 2 + ox;
@@ -759,25 +761,19 @@ void DrawEsp(Bitmap& surface) {
 			if (!font) font = Font::DefaultBitmapFont();
 			std::string name(ev.GetName());
 			if (name.empty()) name = "EV" + std::to_string(ev.GetId());
-			// 긴 이름은 3칸 너비로 자릅니다
-			const int max_w = TILE_SIZE * 3;
+			// 긴 이름은 자릅니다 (창 픽셀 기준, 한글 약 8자)
+			const int max_w = 96;
 			if (Text::GetSize(*font, name).width > max_w) {
 				auto u = Utils::DecodeUTF32(name);
 				while (u.size() > 1 && Text::GetSize(*font, Utils::EncodeUTF(u) + "..").width > max_w) u.pop_back();
 				name = Utils::EncodeUTF(u) + "..";
 			}
 			Rect sz = Text::GetSize(*font, name);
-			label = Bitmap::Create(std::max(1, sz.width + 2), std::max(1, sz.height), Color(0, 0, 0, 170));
-			Text::Draw(*label, 1, 0, *font, Color(255, 255, 255, 255), name);
+			label = Bitmap::Create(std::max(1, sz.width + 4), std::max(1, sz.height + 2), Color(0, 0, 0, 170));
+			Text::Draw(*label, 2, 1, *font, Color(255, 255, 255, 255), name);
 		}
-		Rect lr(x + (TILE_SIZE - label->GetWidth()) / 2, y - label->GetHeight(), label->GetWidth(), label->GetHeight());
-		bool overlap = false;
-		for (auto& p : placed) {
-			if (lr.x < p.x + p.width && p.x < lr.x + lr.width && lr.y < p.y + p.height && p.y < lr.y + lr.height) { overlap = true; break; }
-		}
-		if (overlap) continue;
-		placed.push_back(lr);
-		surface.Blit(lr.x, lr.y, *label, label->GetRect(), Opacity::Opaque());
+		// 이름표는 화면(창) 해상도로 그립니다 (sdl2_ui). 게임 해상도에 그리면 확대되어 너무 큽니다.
+		st.esp_frame.push_back({x + TILE_SIZE / 2, y, label});
 	}
 }
 
@@ -807,6 +803,18 @@ void ApplyBrightness(Bitmap& surface) {
 	if (!st.enabled) return;
 	ApplyScreenEffects(surface);
 	DrawEsp(surface); // 밝기와 상관없이 잘 보이도록 마지막에
+}
+
+const std::vector<EspLabel>& EspLabels() {
+	return st.esp_frame;
+}
+
+int EspLabelGeneration() {
+	return st.esp_generation;
+}
+
+int EspTileSize() {
+	return TILE_SIZE;
 }
 
 } // namespace RocketBridge

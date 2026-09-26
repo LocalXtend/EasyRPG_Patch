@@ -42,6 +42,8 @@
 #include "player.h"
 #include "bitmap.h"
 #include "lcf/scope_guard.h"
+#include "rocket_bridge.h"
+#include <unordered_map>
 
 #if defined(__APPLE__) && TARGET_OS_OSX
 #  include "platform/macos/macos_utils.h"
@@ -693,9 +695,52 @@ void Sdl2Ui::UpdateDisplay() {
 	} else {
 		SDL_RenderCopy(sdl_renderer, sdl_texture_game, nullptr, nullptr);
 	}
+	DrawRocketEspLabels();
 	SDL_RenderPresent(sdl_renderer);
 }
 
+// RocketRPG: ESP 이름표를 창 해상도로 그립니다 (게임 해상도에 그리면 확대되어 너무 큼). 이름표마다 텍스처를 한 번 만들어 둡니다.
+void Sdl2Ui::DrawRocketEspLabels() {
+	static std::unordered_map<const Bitmap*, SDL_Texture*> cache;
+	static int generation = -1;
+	auto drop = [&]() {
+		for (auto& kv : cache) SDL_DestroyTexture(kv.second);
+		cache.clear();
+	};
+	const auto& labels = RocketBridge::EspLabels();
+	if (RocketBridge::EspLabelGeneration() != generation) {
+		drop();
+		generation = RocketBridge::EspLabelGeneration();
+	}
+	if (labels.empty() || main_surface->width() <= 0 || main_surface->height() <= 0) return;
+
+	// 뷰포트 기준 좌표 (SDL_RenderSetViewport가 설정되어 있으면 그 안의 좌표)
+	const float sx = viewport.w > 0 ? static_cast<float>(viewport.w) / main_surface->width() : window.scale;
+	const float sy = viewport.h > 0 ? static_cast<float>(viewport.h) / main_surface->height() : window.scale;
+	const int tile_h = static_cast<int>(RocketBridge::EspTileSize() * sy);
+	std::vector<SDL_Rect> placed;
+	for (const auto& l : labels) {
+		if (!l.bitmap) continue;
+		const Bitmap* bm = l.bitmap.get();
+		auto it = cache.find(bm);
+		if (it == cache.end()) {
+			SDL_Texture* tex = SDL_CreateTexture(sdl_renderer, texture_format, SDL_TEXTUREACCESS_STATIC, bm->width(), bm->height());
+			if (!tex) continue;
+			SDL_UpdateTexture(tex, nullptr, bm->pixels(), bm->pitch());
+			SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+			it = cache.emplace(bm, tex).first;
+		}
+		SDL_Rect r{static_cast<int>(l.x * sx) - bm->width() / 2, static_cast<int>(l.y * sy) - bm->height() - 1, bm->width(), bm->height()};
+		if (r.y < 0) r.y = static_cast<int>(l.y * sy) + tile_h + 1; // 맨 윗줄 이벤트는 상자 아래에
+		bool overlap = false;
+		for (const auto& p : placed) {
+			if (r.x < p.x + p.w && p.x < r.x + r.w && r.y < p.y + p.h && p.y < r.y + r.h) { overlap = true; break; }
+		}
+		if (overlap) continue;
+		placed.push_back(r);
+		SDL_RenderCopy(sdl_renderer, it->second, nullptr, &r);
+	}
+}
 void Sdl2Ui::SetTitle(const std::string &title) {
 	SDL_SetWindowTitle(sdl_window, title.c_str());
 }

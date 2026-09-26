@@ -12,6 +12,7 @@
 #ifndef EP_ROCKET_BRIDGE_H
 #define EP_ROCKET_BRIDGE_H
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,20 @@ namespace RocketBridge {
 
 	/** Applies the launcher brightness/CRT and draws the ESP boxes onto the final frame. */
 	void ApplyBrightness(Bitmap& surface);
+
+	/** ESP name label for the current frame: x = box centre, y = box top, in game-screen pixels. */
+	struct EspLabel {
+		int x = 0, y = 0;
+		std::shared_ptr<Bitmap> bitmap;
+	};
+
+	/**
+	 * Labels are drawn by the display (window resolution, not game resolution) so they stay small and sharp.
+	 * Generation changes whenever label bitmaps were recreated (map change): cached textures must be dropped.
+	 */
+	const std::vector<EspLabel>& EspLabels();
+	int EspLabelGeneration();
+	int EspTileSize();
 }
 
 #endif
