@@ -656,6 +656,10 @@ float SpeedFactor() {
 	return st.enabled ? st.speed : 1.0f;
 }
 
+bool Embedded() {
+	return Init();
+}
+
 bool Paused() {
 	return st.enabled && st.paused;
 }

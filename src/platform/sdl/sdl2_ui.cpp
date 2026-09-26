@@ -493,6 +493,12 @@ bool Sdl2Ui::RefreshDisplayMode() {
 }
 
 void Sdl2Ui::ToggleFullscreen() {
+	// Inside the RocketRPG window (F4, Alt+Enter, a game event or the fullscreen setting) the child window would
+	// cover the whole monitor: only allow leaving fullscreen.
+	if (RocketBridge::Embedded() &&
+			(current_display_mode.flags & SDL_WINDOW_FULLSCREEN_DESKTOP) != SDL_WINDOW_FULLSCREEN_DESKTOP) {
+		return;
+	}
 	BeginDisplayModeChange();
 	if ((current_display_mode.flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) {
 		current_display_mode.flags &= ~SDL_WINDOW_FULLSCREEN_DESKTOP;

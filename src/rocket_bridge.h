@@ -19,6 +19,9 @@
 class Bitmap;
 
 namespace RocketBridge {
+	/** Running inside the RocketRPG window (RR_BRIDGE_PIPE set): the window must never go fullscreen. */
+	bool Embedded();
+
 	/** Called once per displayed frame from Player::MainLoop. */
 	void Tick();
 
