@@ -46,7 +46,7 @@ namespace RocketBridge {
 	void OnMessageStart(const std::vector<std::string>& lines, int choices);
 	void OnMessageEnd();
 
-	/** Applies the launcher brightness to the final frame. */
+	/** Applies the launcher brightness/CRT and draws the ESP boxes onto the final frame. */
 	void ApplyBrightness(Bitmap& surface);
 }
 

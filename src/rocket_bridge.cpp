@@ -39,6 +39,7 @@
 #include "scene_title.h"
 #include "transition.h"
 #include "teleport_target.h"
+#include "text.h"
 #include "utils.h"
 #include <array>
 #include <cstdio>
@@ -81,13 +82,14 @@ struct State {
 	float bright = 1.0f;
 	bool crt = false;
 	BitmapRef white;
+	std::map<int, BitmapRef> esp_labels; // 이벤트 id -> 이름표 (맵이 바뀌면 비움)
+	int esp_map = -1;
 
 	bool msg_busy = false;
 	std::string msg_text;
 	Clock::time_point wait_since{};
 	bool waiting = false;
 	std::string last_telemetry;
-	std::string last_camera;
 } st;
 
 bool Init() {
@@ -329,64 +331,6 @@ std::string Telemetry() {
 	  << ",\"DisplayX\":" << dx << ",\"DisplayY\":" << dy << ",\"Noclip\":" << (through ? "true" : "false")
 	  << ",\"ScreenW\":" << Player::screen_width << ",\"ScreenH\":" << Player::screen_height << "}";
 	return o.str();
-}
-
-// ESP는 맵 타일 좌표로 보냅니다. 화면 위치는 RocketRPG가 카메라("C", 매 프레임)로 계산하므로
-// 주인공이 걸어 화면이 스크롤해도 상자가 늦게 따라오지 않습니다.
-std::string CameraText() {
-	char buf[64];
-	std::snprintf(buf, sizeof(buf), "%.3f,%.3f", Game_Map::GetDisplayX() / double(SCREEN_TILE_SIZE),
-	              Game_Map::GetDisplayY() / double(SCREEN_TILE_SIZE));
-	return buf;
-}
-
-void SendCamera() {
-	if (!OnMap()) return;
-	auto cam = CameraText();
-	if (cam == st.last_camera) return;
-	st.last_camera = cam;
-	SendLine("C", cam);
-}
-
-double WrapTiles(double d, bool loop, int size) {
-	if (!loop || size <= 0) return d;
-	d = std::fmod(d + 4.0, double(size));
-	if (d < 0) d += size;
-	return d - 4.0;
-}
-
-bool SendEsp() {
-	if (!OnMap()) return false;
-	int ox, oy;
-	RenderOffset(ox, oy);
-	const double cx = Game_Map::GetDisplayX() / double(SCREEN_TILE_SIZE);
-	const double cy = Game_Map::GetDisplayY() / double(SCREEN_TILE_SIZE);
-	const bool lx = Game_Map::LoopHorizontal(), ly = Game_Map::LoopVertical();
-	const int mw = Game_Map::GetTilesX(), mh = Game_Map::GetTilesY();
-	const double tw = Player::screen_width / double(TILE_SIZE) + 4, th = Player::screen_height / double(TILE_SIZE) + 4;
-	st.last_camera = CameraText();
-	std::ostringstream o;
-	o << TILE_SIZE << ',' << Player::screen_width << ',' << Player::screen_height << ',' << mw << ',' << mh << ','
-	  << (lx ? 1 : 0) << ',' << (ly ? 1 : 0) << ',' << ox << ',' << oy << ',' << st.last_camera << SEP_F;
-	o.setf(std::ios::fixed);
-	o.precision(3);
-	bool first = true;
-	for (auto& ev : Game_Map::GetEvents()) {
-		if (!ev.IsActive()) continue;
-		double tx = ev.GetSpriteX() / double(SCREEN_TILE_SIZE);
-		double ty = (ev.GetSpriteY() - ev.GetJumpHeight() * TILE_SIZE) / double(SCREEN_TILE_SIZE);
-		double dx = WrapTiles(tx - cx, lx, mw), dy = WrapTiles(ty - cy, ly, mh);
-		if (dx < -4 || dy < -4 || dx > tw || dy > th) continue;
-		std::string name(ev.GetName());
-		if (name.empty()) name = "EV" + std::to_string(ev.GetId());
-		std::replace(name.begin(), name.end(), ',', ' ');
-		std::replace(name.begin(), name.end(), ';', ' ');
-		if (!first) o << ';';
-		first = false;
-		o << ev.GetId() << ',' << tx << ',' << ty << ',' << static_cast<int>(ev.GetTrigger()) << ',' << name;
-	}
-	SendLine("E", o.str());
-	return true;
 }
 
 void SendTile() {
@@ -688,11 +632,10 @@ void Tick() {
 	Connect();
 	if (st.pipe == INVALID_HANDLE_VALUE) return;
 #endif
-	// 파이프 왕복은 게임 루프를 잠깐 멈추므로 최소로: ESP가 켜져 있으면 3프레임마다 ESP 한 번,
-	// 아니면 6프레임마다 텔레메트리(바뀐 경우) 또는 하트비트 한 번. 답에 실려 오는 명령은 이 왕복으로 받습니다.
+	// 파이프 왕복은 게임 루프를 잠깐 멈추므로 최소로: 6프레임마다 텔레메트리(바뀐 경우) 또는 하트비트 한 번.
+	// 답에 실려 오는 명령은 이 왕복으로 받습니다. (ESP는 게임 화면에 직접 그리므로 보내지 않습니다)
 	if (st.frame % 3 == 0) {
 		bool sent = false;
-		if (st.esp && SendEsp()) sent = true;
 		if (st.has_mouse && st.frame % 6 == 3) { SendTile(); sent = true; }
 		if (st.frame % 6 == 0) {
 			auto t = Telemetry();
@@ -704,7 +647,6 @@ void Tick() {
 			if (!sent) SendLine("H");
 		}
 	}
-	if (st.esp) SendCamera();
 }
 
 float SpeedFactor() {
@@ -772,8 +714,74 @@ void OnMessageEnd() {
 	SendLine("M", std::string("0") + SEP_F + SEP_F);
 }
 
-void ApplyBrightness(Bitmap& surface) {
-	if (!st.enabled) return;
+namespace {
+int TriggerClass(int trigger) {
+	switch (trigger) {
+	case 0: return 0;           // 결정키
+	case 1: case 2: return 1;   // 접촉
+	case 3: return 2;           // 자동실행
+	case 4: return 3;           // 병렬처리
+	default: return 4;
+	}
+}
+
+// ESP: RocketRPG 창 위 투명 창에 그리면 매 프레임 창 전체를 다시 합성해야 해서 걸을 때 크게 버벅였습니다.
+// 게임 화면에 직접 그리면 캐릭터와 정확히 같은 프레임에 움직이고 비용도 거의 없습니다.
+void DrawEsp(Bitmap& surface) {
+	if (!st.esp || !OnMap()) return;
+	if (Game_Map::GetMapId() != st.esp_map) {
+		st.esp_labels.clear();
+		st.esp_map = Game_Map::GetMapId();
+	}
+	static const Color pal[5] = {
+		Color(0, 153, 255, 255), Color(0, 204, 68, 255), Color(255, 136, 0, 255), Color(187, 51, 255, 255), Color(0, 255, 255, 255)
+	};
+	int ox, oy;
+	RenderOffset(ox, oy);
+	const int sw = surface.GetWidth(), sh = surface.GetHeight();
+	FontRef font;
+	// 게임 해상도(320x240)에서는 12px 이름표도 커서, 겹치는 이름표는 먼저 그린 것만 보여 줍니다 (상자는 모두 그림).
+	std::vector<Rect> placed;
+	for (auto& ev : Game_Map::GetEvents()) {
+		if (!ev.IsActive()) continue;
+		const int x = ev.GetScreenX() - TILE_SIZE / 2 + ox;
+		const int y = ev.GetScreenY() - TILE_SIZE + oy;
+		if (x <= -TILE_SIZE || y <= -TILE_SIZE || x >= sw || y >= sh + TILE_SIZE) continue;
+		const Color& c = pal[TriggerClass(static_cast<int>(ev.GetTrigger()))];
+		surface.FillRect(Rect(x, y, TILE_SIZE, TILE_SIZE), Color(c.red, c.green, c.blue, 60));
+		surface.FillRect(Rect(x, y, TILE_SIZE, 1), c);
+		surface.FillRect(Rect(x, y + TILE_SIZE - 1, TILE_SIZE, 1), c);
+		surface.FillRect(Rect(x, y + 1, 1, TILE_SIZE - 2), c);
+		surface.FillRect(Rect(x + TILE_SIZE - 1, y + 1, 1, TILE_SIZE - 2), c);
+
+		auto& label = st.esp_labels[ev.GetId()];
+		if (!label) {
+			if (!font) font = Font::DefaultBitmapFont();
+			std::string name(ev.GetName());
+			if (name.empty()) name = "EV" + std::to_string(ev.GetId());
+			// 긴 이름은 3칸 너비로 자릅니다
+			const int max_w = TILE_SIZE * 3;
+			if (Text::GetSize(*font, name).width > max_w) {
+				auto u = Utils::DecodeUTF32(name);
+				while (u.size() > 1 && Text::GetSize(*font, Utils::EncodeUTF(u) + "..").width > max_w) u.pop_back();
+				name = Utils::EncodeUTF(u) + "..";
+			}
+			Rect sz = Text::GetSize(*font, name);
+			label = Bitmap::Create(std::max(1, sz.width + 2), std::max(1, sz.height), Color(0, 0, 0, 170));
+			Text::Draw(*label, 1, 0, *font, Color(255, 255, 255, 255), name);
+		}
+		Rect lr(x + (TILE_SIZE - label->GetWidth()) / 2, y - label->GetHeight(), label->GetWidth(), label->GetHeight());
+		bool overlap = false;
+		for (auto& p : placed) {
+			if (lr.x < p.x + p.width && p.x < lr.x + lr.width && lr.y < p.y + p.height && p.y < lr.y + lr.height) { overlap = true; break; }
+		}
+		if (overlap) continue;
+		placed.push_back(lr);
+		surface.Blit(lr.x, lr.y, *label, label->GetRect(), Opacity::Opaque());
+	}
+}
+
+void ApplyScreenEffects(Bitmap& surface) {
 	Rect r(0, 0, surface.GetWidth(), surface.GetHeight());
 	if (st.crt) {
 		// CRT 주사선: 게임 해상도 기준 홀수 줄을 어둡게 (확대 시 브라운관 느낌)
@@ -792,6 +800,13 @@ void ApplyBrightness(Bitmap& surface) {
 		int a = std::max(0, std::min(200, static_cast<int>((b - 1.0f) * 70)));
 		surface.Blit(0, 0, *st.white, r, Opacity(a), Bitmap::BlendMode::Additive);
 	}
+}
+} // namespace
+
+void ApplyBrightness(Bitmap& surface) {
+	if (!st.enabled) return;
+	ApplyScreenEffects(surface);
+	DrawEsp(surface); // 밝기와 상관없이 잘 보이도록 마지막에
 }
 
 } // namespace RocketBridge

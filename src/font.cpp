@@ -733,9 +733,11 @@ Point Font::Render(Bitmap& dest, int const x, int const y, const Bitmap& sys, in
 
 	auto gret = vRender(glyph);
 
-	if (EP_UNLIKELY(!RenderImpl(dest, x, y, sys, color, gret))) {
+	if (EP_UNLIKELY(gret.bitmap == nullptr)) {
 		return {};
 	}
+	// RocketRPG: a space has an empty bitmap - nothing to draw, but it still advances
+	RenderImpl(dest, x, y, sys, color, gret);
 
 	gret.advance.x += current_style.letter_spacing;
 
@@ -749,9 +751,11 @@ Point Font::Render(Bitmap& dest, int const x, int const y, const Bitmap& sys, in
 
 	auto gret = vRenderShaped(shape.code);
 
-	if (EP_UNLIKELY(!RenderImpl(dest, x, y, sys, color, gret))) {
+	if (EP_UNLIKELY(gret.bitmap == nullptr)) {
 		return {};
 	}
+	// RocketRPG: a space has an empty bitmap - nothing to draw, but it still advances
+	RenderImpl(dest, x, y, sys, color, gret);
 
 	Point advance = { shape.advance.x + current_style.letter_spacing, shape.advance.y };
 	return advance;
