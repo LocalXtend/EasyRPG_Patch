@@ -50,6 +50,12 @@ namespace RocketBridge {
 	void OnMessageStart(const std::vector<std::string>& lines, int choices);
 	void OnMessageEnd();
 
+	/**
+	 * Multiplayer: copies the finished game frame (before brightness/CRT/ESP) into the shared memory named by
+	 * RR_FRAME_SHM so RocketRPG can stream it. Does nothing unless RocketRPG says it is reading.
+	 */
+	void PublishFrame(Bitmap& surface);
+
 	/** Applies the launcher brightness/CRT and draws the ESP boxes onto the final frame. */
 	void ApplyBrightness(Bitmap& surface);
 

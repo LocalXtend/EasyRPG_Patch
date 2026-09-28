@@ -407,6 +407,7 @@ void Player::Update(bool update_scene) {
 void Player::Draw() {
 	Graphics::Update();
 	Graphics::Draw(*DisplayUi->GetDisplaySurface());
+	RocketBridge::PublishFrame(*DisplayUi->GetDisplaySurface());
 	RocketBridge::ApplyBrightness(*DisplayUi->GetDisplaySurface());
 	DisplayUi->UpdateDisplay();
 }

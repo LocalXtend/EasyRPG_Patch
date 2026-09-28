@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <regex>
 #include <sstream>
 
@@ -802,6 +803,61 @@ void ApplyScreenEffects(Bitmap& surface) {
 	}
 }
 } // namespace
+
+// ── 멀티: 게임 화면을 공유 메모리로 (RocketRPG가 방송에 씀) ──
+// 구성 (int32): 0 'RRFR', 1 번호(새 화면마다 +1), 2 칸(0/1), 3 폭, 4 높이, 5 형식(0 RGBA, 1 BGRA), 6 칸 크기, 7 읽는 중(RocketRPG가 1로)
+// 머리 4096바이트 뒤에 칸 두 개. 한 칸에 쓰는 동안 RocketRPG는 다른 칸을 읽습니다.
+#ifdef _WIN32
+namespace {
+constexpr size_t kFrameHeader = 4096;
+constexpr size_t kFrameSlot = 1024 * 768 * 4;
+struct FrameShm {
+	bool tried = false;
+	HANDLE map = nullptr;
+	uint8_t* base = nullptr;
+	int32_t slot = 0;
+} frame_shm;
+}
+#endif
+
+void PublishFrame(Bitmap& surface) {
+#ifdef _WIN32
+	auto& f = frame_shm;
+	if (!f.tried) {
+		f.tried = true;
+		const char* name = std::getenv("RR_FRAME_SHM");
+		if (!name || !*name) return;
+		std::wstring wname(name, name + std::strlen(name));   // RocketRPG가 ASCII 이름을 줌
+		f.map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, static_cast<DWORD>(kFrameHeader + 2 * kFrameSlot), wname.c_str());
+		if (f.map) f.base = static_cast<uint8_t*>(MapViewOfFile(f.map, FILE_MAP_ALL_ACCESS, 0, 0, 0));
+		if (!f.base) { Output::Debug("RocketBridge: frame shared memory unavailable"); return; }
+		reinterpret_cast<volatile int32_t*>(f.base)[0] = 0x52524652;
+		reinterpret_cast<volatile int32_t*>(f.base)[6] = static_cast<int32_t>(kFrameSlot);
+	}
+	if (!f.base) return;
+	auto* h = reinterpret_cast<volatile int32_t*>(f.base);
+	if (h[7] == 0) return;   // 방송 중이 아님
+	const int w = surface.width(), height = surface.height(), pitch = surface.pitch();
+	if (w <= 0 || height <= 0 || static_cast<size_t>(w) * height * 4 > kFrameSlot || Bitmap::pixel_format.bits != 32) return;
+	int fmt;
+	const auto& pf = Bitmap::pixel_format;   // 화면 surface는 이 형식으로 만들어짐
+	if (pf.r.byte == 0 && pf.b.byte == 2) fmt = 0;
+	else if (pf.r.byte == 2 && pf.b.byte == 0) fmt = 1;
+	else return;
+	f.slot ^= 1;
+	uint8_t* dst = f.base + kFrameHeader + f.slot * kFrameSlot;
+	const auto* src = static_cast<const uint8_t*>(surface.pixels());
+	for (int y = 0; y < height; ++y) std::memcpy(dst + static_cast<size_t>(y) * w * 4, src + static_cast<size_t>(y) * pitch, static_cast<size_t>(w) * 4);
+	h[2] = f.slot;
+	h[3] = w;
+	h[4] = height;
+	h[5] = fmt;
+	MemoryBarrier();
+	h[1] = h[1] + 1;
+#else
+	(void)surface;
+#endif
+}
 
 void ApplyBrightness(Bitmap& surface) {
 	if (!st.enabled) return;
