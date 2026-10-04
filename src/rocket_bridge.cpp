@@ -78,6 +78,7 @@ struct State {
 	bool skip = false;
 	bool force_advance = false;
 	bool esp = false;
+	bool esp_share = false;           // 멀티: 방송 화면에도 ESP를 그림 (참가자가 도구 권한이 있을 때)
 	bool remote_ctl = false;          // 멀티: 참가자 조종 중 (매 프레임 파이프 왕복으로 키를 바로 받음)
 	std::vector<int> remote_vks;      // 멀티: 참가자가 지금 누르고 있는 키 (윈도우 가상 키)
 	bool has_mouse = false;
@@ -316,6 +317,7 @@ void Handle(const std::string& cmd) {
 	else if (k == "warp" && OnMap()) {
 		Main_Data::game_player->ReserveTeleport(argi(1, 1), argi(2, 0), argi(3, 0), -1, TeleportTarget::eParallelTeleport);
 	}
+	else if (k == "espshare") st.esp_share = arg(1) == "1";
 	else if (k == "rctl") {
 		st.remote_ctl = arg(1) == "1";
 		if (!st.remote_ctl) st.remote_vks.clear();
@@ -794,8 +796,9 @@ int TriggerClass(int trigger) {
 
 // ESP: RocketRPG 창 위 투명 창에 그리면 매 프레임 창 전체를 다시 합성해야 해서 걸을 때 크게 버벅였습니다.
 // 게임 화면에 직접 그리면 캐릭터와 정확히 같은 프레임에 움직이고 비용도 거의 없습니다.
-void DrawEsp(Bitmap& surface) {
-	st.esp_frame.clear();
+// ESP 상자와 이름표. stream이면 방송용 화면(게임 해상도)에 이름표까지 직접 그리고, 아니면 이름표는 창 해상도로 그리도록 모아 둡니다.
+void DrawEspOn(Bitmap& surface, bool stream) {
+	if (!stream) st.esp_frame.clear();
 	if (!st.esp || !OnMap()) return;
 	if (Game_Map::GetMapId() != st.esp_map) {
 		st.esp_labels.clear();
@@ -809,6 +812,7 @@ void DrawEsp(Bitmap& surface) {
 	RenderOffset(ox, oy);
 	const int sw = surface.GetWidth(), sh = surface.GetHeight();
 	FontRef font;
+	std::vector<Rect> placed;
 	for (auto& ev : Game_Map::GetEvents()) {
 		if (!ev.IsActive()) continue;
 		const int x = ev.GetScreenX() - TILE_SIZE / 2 + ox;
@@ -837,10 +841,23 @@ void DrawEsp(Bitmap& surface) {
 			label = Bitmap::Create(std::max(1, sz.width + 4), std::max(1, sz.height + 2), Color(0, 0, 0, 170));
 			Text::Draw(*label, 2, 1, *font, Color(255, 255, 255, 255), name);
 		}
+		if (stream) {
+			int lx = x + TILE_SIZE / 2 - label->width() / 2, ly = y - label->height() - 1;
+			if (ly < 0) ly = y + TILE_SIZE + 1;
+			Rect r(lx, ly, label->width(), label->height());
+			bool overlap = false;
+			for (const auto& p : placed) if (r.x < p.x + p.width && p.x < r.x + r.width && r.y < p.y + p.height && p.y < r.y + r.height) { overlap = true; break; }
+			if (overlap) continue;
+			placed.push_back(r);
+			surface.Blit(lx, ly, *label, label->GetRect(), Opacity::Opaque());
+			continue;
+		}
 		// 이름표는 화면(창) 해상도로 그립니다 (sdl2_ui). 게임 해상도에 그리면 확대되어 너무 큽니다.
 		st.esp_frame.push_back({x + TILE_SIZE / 2, y, label});
 	}
 }
+
+void DrawEsp(Bitmap& surface) { DrawEspOn(surface, false); }
 
 void ApplyScreenEffects(Bitmap& surface) {
 	Rect r(0, 0, surface.GetWidth(), surface.GetHeight());
@@ -908,6 +925,11 @@ void PublishFrame(Bitmap& surface) {
 	uint8_t* dst = f.base + kFrameHeader + f.slot * kFrameSlot;
 	const auto* src = static_cast<const uint8_t*>(surface.pixels());
 	for (int y = 0; y < height; ++y) std::memcpy(dst + static_cast<size_t>(y) * w * 4, src + static_cast<size_t>(y) * pitch, static_cast<size_t>(w) * 4);
+	// 참가자도 도구 권한이 있으면 방송 화면에 ESP를 그립니다 (방장 화면의 밝기·CRT는 넣지 않음)
+	if (st.esp_share && st.esp) {
+		auto shared = Bitmap::Create(dst, w, height, w * 4, Bitmap::pixel_format);
+		if (shared) DrawEspOn(*shared, true);
+	}
 	h[2] = f.slot;
 	h[3] = w;
 	h[4] = height;
