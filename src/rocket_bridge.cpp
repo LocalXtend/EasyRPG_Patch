@@ -79,6 +79,8 @@ struct State {
 	bool force_advance = false;
 	bool esp = false;
 	bool esp_share = false;           // 멀티: 방송 화면에도 ESP를 그림 (참가자가 도구 권한이 있을 때)
+	int choice_gen = 0;               // 선택지가 열릴 때마다 하나씩 (지난 선택지의 투표를 가려냄)
+	bool choice_open = false;
 	bool remote_ctl = false;          // 멀티: 참가자 조종 중 (매 프레임 파이프 왕복으로 키를 바로 받음)
 	std::vector<int> remote_vks;      // 멀티: 참가자가 지금 누르고 있는 키 (윈도우 가상 키)
 	bool has_mouse = false;
@@ -775,8 +777,31 @@ void OnMessageStart(const std::vector<std::string>& lines, int choices) {
 	SendLine("M", std::string("1") + SEP_F + SEP_F + st.msg_text);
 }
 
+void OnChoiceStart(const std::vector<std::string>& items, const std::vector<bool>& enabled) {
+	if (!Init()) return;
+	++st.choice_gen;
+	st.choice_open = true;
+	// "Q" 줄: 번호 ␟ 고른 것(-1 = 고르는 중) ␟ 줄마다 (1|0 고를 수 있음) + 글
+	std::string p = std::to_string(st.choice_gen) + SEP_F + "-1" + SEP_F;
+	for (size_t i = 0; i < items.size(); ++i) {
+		if (i) p += '\n';
+		p += (i < enabled.size() && !enabled[i]) ? '0' : '1';
+		std::string t = CleanMessage(items[i]);
+		std::replace(t.begin(), t.end(), '\n', ' ');
+		p += t;
+	}
+	SendLine("Q", p);
+}
+
+void OnChoiceEnd(int picked) {
+	if (!Init() || !st.choice_open) return;
+	st.choice_open = false;
+	SendLine("Q", std::to_string(st.choice_gen) + SEP_F + std::to_string(picked) + SEP_F);
+}
+
 void OnMessageEnd() {
 	at.choice = false;
+	if (st.choice_open) OnChoiceEnd(-1);
 	if (!Init() || !st.msg_busy) return;
 	st.msg_busy = false;
 	st.waiting = false;

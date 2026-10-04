@@ -217,6 +217,16 @@ void Window_Message::OnFinishPage() {
 
 void Window_Message::StartChoiceProcessing() {
 	SetIndex(0);
+	// RocketRPG 멀티: 선택지 투표용으로 선택지 글과 고를 수 있는지를 알림
+	std::vector<std::string> items;
+	std::vector<bool> enabled;
+	const auto& lines = pending_message.GetLines();
+	for (int i = 0; i < pending_message.GetNumChoices(); ++i) {
+		size_t at = static_cast<size_t>(pending_message.GetChoiceStartLine() + i);
+		items.push_back(at < lines.size() ? lines[at] : std::string());
+		enabled.push_back(pending_message.IsChoiceEnabled(i));
+	}
+	RocketBridge::OnChoiceStart(items, enabled);
 }
 
 void Window_Message::StartNumberInputProcessing() {
@@ -806,6 +816,7 @@ void Window_Message::InputChoice() {
 	}
 
 	if (choice_result >= 0) {
+		RocketBridge::OnChoiceEnd(choice_result);
 		auto& continuation = pending_message.GetChoiceContinuation();
 		if (continuation) {
 			aop = continuation(choice_result);

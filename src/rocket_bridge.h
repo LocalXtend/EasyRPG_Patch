@@ -55,6 +55,10 @@ namespace RocketBridge {
 	void OnMessageStart(const std::vector<std::string>& lines, int choices);
 	void OnMessageEnd();
 
+	/** Choice selection opened (texts, selectable) / closed with the picked index: for the launcher's multiplayer vote. */
+	void OnChoiceStart(const std::vector<std::string>& items, const std::vector<bool>& enabled);
+	void OnChoiceEnd(int picked);
+
 	/**
 	 * Multiplayer: copies the finished game frame (before brightness/CRT/ESP) into the shared memory named by
 	 * RR_FRAME_SHM so RocketRPG can stream it. Does nothing unless RocketRPG says it is reading.
