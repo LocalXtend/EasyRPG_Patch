@@ -28,6 +28,7 @@
 #include "game_system.h"
 #include "main_data.h"
 #include "version.h"
+#include "rocket_bridge.h"
 
 using namespace std::chrono_literals;
 
@@ -52,6 +53,7 @@ std::unique_ptr<Input::Source> Input::Source::Create(
 
 void Input::UiSource::DoUpdate(bool system_only) {
 	keystates = DisplayUi->GetKeyStates();
+	RocketBridge::MergeRemoteKeys(keystates);
 
 	pressed_buttons = {};
 

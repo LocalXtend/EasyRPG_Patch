@@ -12,9 +12,11 @@
 #ifndef EP_ROCKET_BRIDGE_H
 #define EP_ROCKET_BRIDGE_H
 
+#include <bitset>
 #include <memory>
 #include <string>
 #include <vector>
+#include "keys.h"
 
 class Bitmap;
 
@@ -39,6 +41,9 @@ namespace RocketBridge {
 
 	/** Walk-through-walls requested by the launcher. */
 	bool Noclip();
+
+	/** Multiplayer: presses the keys a remote participant is holding (sent by the launcher) into this frame's key states. */
+	void MergeRemoteKeys(std::bitset<Input::Keys::KEYS_COUNT>& keys);
 
 	/** Message text is shown instantly and advanced every frame. */
 	bool Skip();

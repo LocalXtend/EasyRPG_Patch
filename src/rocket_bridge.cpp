@@ -78,6 +78,8 @@ struct State {
 	bool skip = false;
 	bool force_advance = false;
 	bool esp = false;
+	bool remote_ctl = false;          // 멀티: 참가자 조종 중 (매 프레임 파이프 왕복으로 키를 바로 받음)
+	std::vector<int> remote_vks;      // 멀티: 참가자가 지금 누르고 있는 키 (윈도우 가상 키)
 	bool has_mouse = false;
 	int mouse_x = 0, mouse_y = 0;
 	float bright = 1.0f;
@@ -313,6 +315,52 @@ void Handle(const std::string& cmd) {
 	}
 	else if (k == "warp" && OnMap()) {
 		Main_Data::game_player->ReserveTeleport(argi(1, 1), argi(2, 0), argi(3, 0), -1, TeleportTarget::eParallelTeleport);
+	}
+	else if (k == "rctl") {
+		st.remote_ctl = arg(1) == "1";
+		if (!st.remote_ctl) st.remote_vks.clear();
+	}
+	else if (k == "rkeys") {
+		st.remote_vks.clear();
+		for (const auto& v : Split(arg(1), ',')) {
+			int vk = std::atoi(v.c_str());
+			if (vk > 0 && vk < 256 && st.remote_vks.size() < 32) st.remote_vks.push_back(vk);
+		}
+	}
+}
+
+// 윈도우 가상 키 → Player 키 (멀티 참가자 키). Shift는 창 메시지로 넣으면 SDL이 실제 키보드 상태를 보고 바로 떼어 버려
+// 이 경로로만 들어갑니다. 나머지 키도 함께 넣어, 창이 포커스를 잃은 동안에도 눌린 상태가 유지되게 합니다.
+Input::Keys::InputKey VkToKey(int vk) {
+	using namespace Input::Keys;
+	if (vk >= 0x41 && vk <= 0x5A) return static_cast<InputKey>(A + (vk - 0x41));
+	if (vk >= 0x30 && vk <= 0x39) return static_cast<InputKey>(N0 + (vk - 0x30));
+	if (vk >= 0x60 && vk <= 0x69) return static_cast<InputKey>(KP0 + (vk - 0x60));
+	if (vk >= 0x70 && vk <= 0x7B) return static_cast<InputKey>(F1 + (vk - 0x70));
+	switch (vk) {
+		case 0x08: return BACKSPACE;
+		case 0x09: return TAB;
+		case 0x0D: return RETURN;
+		case 0x10: case 0xA0: return LSHIFT;
+		case 0xA1: return RSHIFT;
+		case 0x1B: return ESCAPE;
+		case 0x20: return SPACE;
+		case 0x21: return PGUP;
+		case 0x22: return PGDN;
+		case 0x23: return ENDS;
+		case 0x24: return HOME;
+		case 0x25: return LEFT;
+		case 0x26: return UP;
+		case 0x27: return RIGHT;
+		case 0x28: return DOWN;
+		case 0x2D: return INSERT;
+		case 0x2E: return DEL;
+		case 0x6A: return KP_MULTIPLY;
+		case 0x6B: return KP_ADD;
+		case 0x6D: return KP_SUBTRACT;
+		case 0x6E: return KP_PERIOD;
+		case 0x6F: return KP_DIVIDE;
+		default: return NONE;
 	}
 }
 
@@ -650,6 +698,8 @@ void Tick() {
 			if (!sent) SendLine("H");
 		}
 	}
+	// 멀티 참가자가 조종 중이면 매 프레임 한 번 왕복해 키 상태를 바로 받습니다.
+	else if (st.remote_ctl) SendLine("H");
 }
 
 float SpeedFactor() {
@@ -667,6 +717,16 @@ bool Paused() {
 
 bool Noclip() {
 	return st.enabled && st.noclip;
+}
+
+void MergeRemoteKeys(std::bitset<Input::Keys::KEYS_COUNT>& keys) {
+	if (!st.enabled || st.remote_vks.empty()) return;
+	for (int vk : st.remote_vks) {
+		auto key = VkToKey(vk);
+		if (key == Input::Keys::NONE) continue;
+		keys[key] = true;
+		if (key == Input::Keys::LSHIFT || key == Input::Keys::RSHIFT) keys[Input::Keys::SHIFT] = true;
+	}
 }
 
 bool Skip() {
