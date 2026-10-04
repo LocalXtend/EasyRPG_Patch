@@ -5,6 +5,8 @@
  * (xkey / xheld); the character walks on the map, cannot leave the host's camera (it is moved next to the host
  * when the camera leaves it) and can start events by talking (decision key), touching or stepping on them.
  * The characters are not part of the game data (Main_Data), so save files never contain them.
+ * They only move while the host could move, are hidden while the host's character is hidden (title maps, cut-scenes),
+ * walk at the host's speed, follow the host's teleports (also within a map) and can be summoned by the host.
  * Same rules as RocketRPG's MV/MZ (rocket_extra.js) and XP/VX/Ace (rocket_mkxp_agent.rb) versions.
  *
  * This file is part of a modified EasyRPG Player and is licensed under the GNU GPL v3 or later.
@@ -27,6 +29,8 @@ namespace RocketExtra {
 	void SetGuests(const std::string& list);   // id \x01 name \x01 #rrggbb, guests joined by \x02
 	void Key(const std::string& id, int vk, bool down);
 	void Held(const std::string& id, const std::vector<int>& vks);
+	/** Host: move every participant character next to the host (next update). */
+	void Summon();
 
 	bool On();
 

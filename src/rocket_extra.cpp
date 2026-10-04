@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <memory>
@@ -27,6 +28,8 @@
 #include "text.h"
 #include "utils.h"
 #include <lcf/rpg/eventpage.h>
+#include <lcf/rpg/moveroute.h>
+#include <lcf/rpg/movecommand.h>
 
 namespace {
 
@@ -64,6 +67,9 @@ struct Guest {
 
 struct State {
 	bool on = false;
+	bool summon = false;          // 방장이 모두 불렀음 (다음 갱신에서 방장 자리로)
+	bool has_last = false;        // 방장 위치 (순간이동 감지)
+	int last_map = 0, last_x = 0, last_y = 0;
 	std::map<std::string, Guest> guests;
 	std::vector<Game_Character*> chars;
 } ex;
@@ -108,8 +114,35 @@ bool OnMap() {
 	return Scene::instance && Scene::instance->type == Scene::Map && Main_Data::game_player;
 }
 
+// 방장 캐릭터가 보이는지 (숨기기·그림 없음·탈것 안이면 타이틀 맵이나 연출 중: 참가자도 숨김)
+bool HostVisible() {
+	auto& p = *Main_Data::game_player;
+	return p.IsVisible() && !p.GetSpriteName().empty();
+}
+
+// 방장이 지금 움직일 수 있는지 (이동 경로 강제, 탈것 타고 내리는 중이면 못 움직임)
+bool HostMovable() {
+	auto& p = *Main_Data::game_player;
+	return !p.IsMoveRouteOverwritten() && !p.IsBoardingOrUnboarding();
+}
+
+// 방장이 순간이동했는지: 다른 맵이거나, 점프가 아닌데 한 번에 2칸 넘게 움직임 (같은 맵 안의 장소 이동)
+bool HostTeleported() {
+	auto& p = *Main_Data::game_player;
+	const int map = Game_Map::GetMapId(), x = p.GetX(), y = p.GetY();
+	const bool had = ex.has_last;
+	const int pm = ex.last_map, px = ex.last_x, py = ex.last_y;
+	ex.has_last = true;
+	ex.last_map = map; ex.last_x = x; ex.last_y = y;
+	if (!had) return false;
+	if (pm != map) return true;
+	if (p.IsJumping()) return false;
+	return std::abs(x - px) + std::abs(y - py) > 1;
+}
+
 bool CanAct() {
 	if (!ex.on || !OnMap()) return false;
+	if (!HostMovable() || !HostVisible()) return false;
 	if (Game_Map::GetInterpreter().IsRunning() || Game_Map::IsAnyEventStarting()) return false;
 	if (Game_Message::IsMessageActive()) return false;
 	if (Main_Data::game_player->IsPendingTeleport()) return false;
@@ -165,6 +198,7 @@ void Look(Game_RocketGuest& g) {
 	if (g.GetSpriteName() != p.GetSpriteName() || g.GetSpriteIndex() != p.GetSpriteIndex())
 		g.SetSpriteGraphic(std::string(p.GetSpriteName()), p.GetSpriteIndex());
 	g.SetTransparency(p.GetTransparency());
+	g.SetSpriteHidden(!HostVisible());
 }
 
 } // namespace
@@ -172,6 +206,8 @@ void Look(Game_RocketGuest& g) {
 namespace RocketExtra {
 
 bool On() { return ex.on; }
+
+void Summon() { ex.summon = true; }
 
 void SetMode(bool on) {
 	ex.on = on;
@@ -233,6 +269,8 @@ void Update() {
 	if (!ex.on || ex.guests.empty() || !OnMap()) return;
 	auto& p = *Main_Data::game_player;
 	const bool act = CanAct();
+	const bool jump = HostTeleported() || ex.summon;
+	ex.summon = false;
 	bool rebuilt = false;
 	for (auto& kv : ex.guests) {
 		auto& g = kv.second;
@@ -242,7 +280,7 @@ void Update() {
 		}
 		auto& c = *g.ch;
 		Look(c);
-		if (g.map_id != Game_Map::GetMapId()) {   // 맵이 바뀌면 방장 곁으로
+		if (jump || g.map_id != Game_Map::GetMapId()) {   // 방장이 순간이동했거나 불렀으면 방장 곁으로
 			g.map_id = Game_Map::GetMapId();
 			c.SetMapId(g.map_id);
 			c.Place(p.GetX(), p.GetY());
@@ -291,7 +329,7 @@ void ForEachLabel(F&& f) {
 	FontRef font;
 	for (auto& kv : ex.guests) {
 		auto& g = kv.second;
-		if (!g.ch || g.ch->GetTransparency() >= 7) continue;
+		if (!g.ch || g.ch->GetTransparency() >= 7 || !HostVisible()) continue;
 		std::string key = g.name + "/" + std::to_string(g.color.red) + "," + std::to_string(g.color.green) + "," + std::to_string(g.color.blue);
 		if (!g.label || g.label_key != key) {
 			if (!font) font = Font::DefaultBitmapFont();
@@ -326,7 +364,8 @@ void DrawLabels(Bitmap& surface, int ox, int oy) {
 namespace RocketExtra {
 namespace {
 struct SelfTestState {
-	int et = 0, wait = 0, wait2 = 0, viol = 0, off_x = -1, start_x = 0, start_y = 0, moved = -1;
+	int et = 0, wait = 0, wait2 = 0, viol = 0, off_x = -1, start_x = 0, start_y = 0, moved = -1, tp_x = -1, lock_x = 0, lock_y = 0;
+	bool summoned = false;
 	Game_Event* target = nullptr;
 } tst;
 }
@@ -361,6 +400,51 @@ int SelfTestStep(const std::function<void(const std::string&)>& log) {
 		Held("t1", {});
 		log(std::string("EXTRA move ") + (tst.moved >= 0 ? "ok" : "FAIL") + " " + std::to_string(tst.start_x) + "," + std::to_string(tst.start_y) +
 			" -> " + (c ? std::to_string(c->GetX()) + "," + std::to_string(c->GetY()) : "-") + " canAct " + (CanAct() ? "true" : "false"));
+	}
+	// 1.1.2: 같은 맵 순간이동 따라가기, 모두 부르기, 방장이 못 움직이면 멈춤, 방장이 숨으면 숨김
+	if (et == 175 && c && CanAct()) {
+		int tx = -1;
+		for (int dx : {3, -3, 4, -4}) {
+			int x = p.GetX() + dx;
+			if (Game_Map::IsValid(x, p.GetY()) && InView(x, p.GetY())) { tx = x; break; }
+		}
+		if (tx >= 0) { tst.tp_x = tx; p.MoveTo(Game_Map::GetMapId(), tx, p.GetY()); }
+		else log("EXTRA teleport skipped (no room on screen)");
+	}
+	if (et == 178 && c && tst.tp_x >= 0)
+		log(std::string("EXTRA teleport same map -> ") + (c->GetX() == p.GetX() && c->GetY() == p.GetY() ? "followed ok" : "FAIL " + std::to_string(c->GetX()) + "," + std::to_string(c->GetY())));
+	if (et == 180 && c && CanAct()) {
+		int x = Game_Map::XwithDirection(p.GetX(), Game_Character::Left);
+		c->Place(Game_Map::IsValid(x, p.GetY()) ? x : p.GetX(), p.GetY());
+		Summon();
+		tst.summoned = true;
+	}
+	if (et == 182 && c && tst.summoned)
+		log(std::string("EXTRA summon -> ") + (c->GetX() == p.GetX() && c->GetY() == p.GetY() ? "ok" : "FAIL"));
+	if (et == 184 && c) {
+		// 이벤트가 방장을 묶어 둔 것처럼: '대기'를 반복하는 이동 경로
+		lcf::rpg::MoveRoute route;
+		route.repeat = true;
+		lcf::rpg::MoveCommand wait;
+		wait.command_id = static_cast<int32_t>(lcf::rpg::MoveCommand::Code::wait);
+		route.move_commands.push_back(wait);
+		p.ForceMoveRoute(route, 8);
+		tst.lock_x = c->GetX(); tst.lock_y = c->GetY();
+	}
+	if (et >= 184 && et < 194 && c) Held("t1", {0x28});
+	if (et == 194 && c) {
+		Held("t1", {});
+		bool still = c->GetX() == tst.lock_x && c->GetY() == tst.lock_y;
+		p.CancelMoveRoute();
+		log(std::string("EXTRA host locked -> ") + (still ? "guest stays ok" : "FAIL guest moved"));
+	}
+	if (et == 195 && c) p.SetSpriteHidden(true);
+	if (et == 197 && c) {
+		bool hidden = c->IsSpriteHidden();
+		std::vector<RocketBridge::EspLabel> labels;
+		AppendLabels(labels, 0, 0);
+		p.SetSpriteHidden(false);
+		log(std::string("EXTRA host hidden -> ") + (hidden && labels.empty() ? "guest and name hidden ok" : "FAIL"));
 	}
 	if (et == 200 && c) {
 		for (int x = 0; x < Game_Map::GetTilesX(); ++x) if (!InView(x, p.GetY())) { tst.off_x = x; break; }

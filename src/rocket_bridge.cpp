@@ -336,6 +336,7 @@ void Handle(const std::string& cmd) {
 	else if (k == "xmode") RocketExtra::SetMode(arg(1) == "1");
 	else if (k == "xguests") RocketExtra::SetGuests(arg(1));
 	else if (k == "xkey") RocketExtra::Key(arg(1), argi(2, 0), arg(3) == "1");
+	else if (k == "xsummon") RocketExtra::Summon();
 	else if (k == "xheld") {
 		std::vector<int> vks;
 		for (const auto& v : Split(arg(2), ',')) {
