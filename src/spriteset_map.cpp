@@ -17,6 +17,7 @@
 
 // Headers
 #include "spriteset_map.h"
+#include "rocket_extra.h"
 #include "cache.h"
 #include "game_dynrpg.h"
 #include "game_map.h"
@@ -115,7 +116,28 @@ void Spriteset_Map::Update() {
 		shadow->Update();
 	}
 
+	UpdateRocketGuests(new_tone);
+
 	Main_Data::game_dynrpg->Update();
+}
+
+// RocketRPG 멀티 엑스트라 모드: 참가자가 들어오고 나갈 때 그림을 다시 만들고, 매 프레임 갱신
+void Spriteset_Map::UpdateRocketGuests(const Tone& tone) {
+	const auto& chars = RocketExtra::Characters();
+	if (chars != rocket_guest_chars) {
+		rocket_guest_chars = chars;
+		rocket_guest_sprites.clear();
+		for (auto* ch : chars) {
+			auto sp = std::make_unique<Sprite_Character>(ch);
+			sp->SetRenderOx(map_render_ox);
+			sp->SetRenderOy(map_render_oy);
+			rocket_guest_sprites.push_back(std::move(sp));
+		}
+	}
+	for (auto& sp : rocket_guest_sprites) {
+		sp->Update();
+		sp->SetTone(tone);
+	}
 }
 
 void Spriteset_Map::ChipsetUpdated() {

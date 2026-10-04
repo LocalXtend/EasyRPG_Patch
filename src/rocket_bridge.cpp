@@ -5,6 +5,7 @@
  */
 
 #include "rocket_bridge.h"
+#include "rocket_extra.h"
 
 #include <algorithm>
 #include <chrono>
@@ -331,6 +332,18 @@ void Handle(const std::string& cmd) {
 			if (vk > 0 && vk < 256 && st.remote_vks.size() < 32) st.remote_vks.push_back(vk);
 		}
 	}
+	// 멀티 엑스트라 모드 (rocket_extra.cpp)
+	else if (k == "xmode") RocketExtra::SetMode(arg(1) == "1");
+	else if (k == "xguests") RocketExtra::SetGuests(arg(1));
+	else if (k == "xkey") RocketExtra::Key(arg(1), argi(2, 0), arg(3) == "1");
+	else if (k == "xheld") {
+		std::vector<int> vks;
+		for (const auto& v : Split(arg(2), ',')) {
+			int vk = std::atoi(v.c_str());
+			if (vk > 0 && vk < 256 && vks.size() < 32) vks.push_back(vk);
+		}
+		RocketExtra::Held(arg(1), vks);
+	}
 }
 
 // 윈도우 가상 키 → Player 키 (멀티 참가자 키). Shift는 창 메시지로 넣으면 SDL이 실제 키보드 상태를 보고 바로 떼어 버려
@@ -580,6 +593,13 @@ void AutotestTick() {
 	} else {
 		at.title_fixed = false;
 	}
+	// 엑스트라 모드 시험: 확인 키는 시험이 원할 때만
+	if (at.phase == 10) {
+		int r = RocketExtra::SelfTestStep(AtLog);
+		if (r == 1 && at.frame % 12 == 0) Input::SimulateButtonPress(Input::DECISION);
+		if (r == 2) Finish();
+		return;
+	}
 	bool need_down = at.choice && at.downs_done < at.downs_needed;
 	if (need_down && at.frame % 12 == 6) {
 		Input::SimulateButtonPress(Input::DOWN);
@@ -617,6 +637,12 @@ void AutotestTick() {
 	}
 
 	if (at.phase == 0) {
+		const char* xt = std::getenv("RR_EXTRA_TEST");
+		if (xt && std::string(xt) == "1" && scene == Scene::Map && Game_Map::GetMapId() > 0 && ++at.off_map > 60) {
+			AtLog("EXTRA begin map=" + std::to_string(Game_Map::GetMapId()));
+			at.phase = 10;
+			return;
+		}
 		if (scene == Scene::Map && Game_Map::GetMapId() > 0 && ++at.off_map > 60) {
 			at.off_map = 0;
 			BuildMapList();
@@ -672,6 +698,7 @@ void LogicTick() {
 }
 
 void PostUpdate() {
+	RocketExtra::Update();
 	if (!at.enabled || !at.name_finish) return;
 	at.name_finish = false;
 	if (SceneType() == Scene::Name) {
@@ -951,9 +978,15 @@ void PublishFrame(Bitmap& surface) {
 	const auto* src = static_cast<const uint8_t*>(surface.pixels());
 	for (int y = 0; y < height; ++y) std::memcpy(dst + static_cast<size_t>(y) * w * 4, src + static_cast<size_t>(y) * pitch, static_cast<size_t>(w) * 4);
 	// 참가자도 도구 권한이 있으면 방송 화면에 ESP를 그립니다 (방장 화면의 밝기·CRT는 넣지 않음)
-	if (st.esp_share && st.esp) {
+	if ((st.esp_share && st.esp) || RocketExtra::On()) {
 		auto shared = Bitmap::Create(dst, w, height, w * 4, Bitmap::pixel_format);
-		if (shared) DrawEspOn(*shared, true);
+		if (shared && st.esp_share && st.esp) DrawEspOn(*shared, true);
+		// 엑스트라 모드 참가자 이름표는 방송 화면에 직접 (참가자 화면에는 창 해상도 이름표가 없음)
+		if (shared && RocketExtra::On()) {
+			int ox, oy;
+			RenderOffset(ox, oy);
+			RocketExtra::DrawLabels(*shared, ox, oy);
+		}
 	}
 	h[2] = f.slot;
 	h[3] = w;
@@ -970,6 +1003,11 @@ void ApplyBrightness(Bitmap& surface) {
 	if (!st.enabled) return;
 	ApplyScreenEffects(surface);
 	DrawEsp(surface); // 밝기와 상관없이 잘 보이도록 마지막에
+	if (RocketExtra::On()) {
+		int ox, oy;
+		RenderOffset(ox, oy);
+		RocketExtra::AppendLabels(st.esp_frame, ox, oy);   // 엑스트라 모드 참가자 이름표 (ESP 이름표처럼 창 해상도로)
+	}
 }
 
 const std::vector<EspLabel>& EspLabels() {

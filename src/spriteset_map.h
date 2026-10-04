@@ -108,6 +108,10 @@ protected:
 	std::string panorama_name;
 	std::vector<std::unique_ptr<Sprite_Character>> character_sprites;
 	std::vector<std::unique_ptr<Sprite_AirshipShadow>> airship_shadows;
+	// RocketRPG 멀티 엑스트라 모드: 참가자 캐릭터 그림 (캐릭터는 RocketExtra가 가짐)
+	std::vector<std::unique_ptr<Sprite_Character>> rocket_guest_sprites;
+	std::vector<Game_Character*> rocket_guest_chars;
+	void UpdateRocketGuests(const Tone& tone);
 	std::unique_ptr<Sprite_Timer> timer1;
 	std::unique_ptr<Sprite_Timer> timer2;
 	std::unique_ptr<Screen> screen;

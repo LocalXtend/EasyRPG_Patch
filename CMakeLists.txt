@@ -275,6 +275,8 @@ add_library(${PROJECT_NAME} OBJECT
 	src/player.cpp
 	src/rocket_bridge.cpp
 	src/rocket_bridge.h
+	src/rocket_extra.cpp
+	src/rocket_extra.h
 	src/player.h
 	src/point.h
 	src/rand.cpp
