@@ -272,7 +272,7 @@ void Update() {
 				}
 			}
 		}
-		c.SetMoveSpeed(g.dash && act ? 5 : 4);
+		c.SetMoveSpeed(p.GetMoveSpeed());   // 2000/2003은 달리기가 없음: 방장 캐릭터와 같은 속도 (이벤트가 바꾼 속도도 따라감)
 		c.Step();
 		g.was_moving = !c.IsStopping();
 	}
