@@ -315,6 +315,7 @@ void DrawLabels(Bitmap& surface, int ox, int oy) {
 	ForEachLabel([&](Game_Character& c, const BitmapRef& label) {
 		int x = c.GetScreenX() + ox - label->width() / 2;
 		int y = c.GetScreenY() - TILE_SIZE - 2 + oy - label->height();
+		if (y < 0) y = c.GetScreenY() + oy + 1;   // 맨 윗줄이면 발 아래에 (화면 밖으로 잘리지 않게)
 		surface.Blit(x, y, *label, label->GetRect(), Opacity::Opaque());
 	});
 }
