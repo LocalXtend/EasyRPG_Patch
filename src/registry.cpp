@@ -22,6 +22,7 @@
 #if defined(_WIN32) && !defined(_ARM_)
 
 // Headers
+#include <algorithm>
 #include <string>
 #include "registry.h"
 #include "utils.h"
@@ -40,8 +41,10 @@
 #endif
 
 std::string Registry::ReadStrValue(HKEY hkey, std::string_view key, std::string_view val, REGVIEW view) {
-	char value[1024];
-	DWORD size = 1024;
+	// RocketRPG: RegQueryValueExW gives UTF-16. The old code copied it into a char buffer and dropped the zero
+	// bytes, which only works for ASCII paths (an RTP installed under a Korean/Japanese folder name became garbage).
+	wchar_t value[1024];
+	DWORD size = sizeof(value);
 	DWORD type = REG_SZ;
 	HKEY key_handle;
 	REGSAM desired_access = KEY_QUERY_VALUE;
@@ -66,18 +69,25 @@ std::string Registry::ReadStrValue(HKEY hkey, std::string_view key, std::string_
 
 	std::wstring wval = Utils::ToWideString(ToString(val));
 
-	if (RegQueryValueEx(key_handle, wval.c_str(), NULL, &type, (LPBYTE)&value, &size)) {
+	if (RegQueryValueExW(key_handle, wval.c_str(), NULL, &type, reinterpret_cast<LPBYTE>(value), &size)) {
+		RegCloseKey(key_handle);
 		return "";
 	}
 	RegCloseKey(key_handle);
-
-	std::string string_value = "";
-	for (unsigned int i = 0; i < size; i++) {
-		if (value[i] != '\0' ) {
-			string_value += value[i];
-		}
+	if (type != REG_SZ && type != REG_EXPAND_SZ) {
+		return "";
 	}
-	return string_value;
+
+	std::wstring wide(value, std::min<size_t>(size / sizeof(wchar_t), 1024));
+	while (!wide.empty() && wide.back() == L'\0') {
+		wide.pop_back();
+	}
+	if (type == REG_EXPAND_SZ) {
+		wchar_t expanded[1024];
+		DWORD n = ExpandEnvironmentStringsW(wide.c_str(), expanded, 1024);
+		if (n > 0 && n <= 1024) wide = expanded;
+	}
+	return Utils::FromWideString(wide);
 }
 
 int Registry::ReadBinValue(HKEY hkey, std::string_view key, std::string_view val, unsigned char* bin, REGVIEW view) {

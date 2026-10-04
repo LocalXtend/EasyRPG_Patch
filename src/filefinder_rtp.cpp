@@ -19,6 +19,8 @@
 #include "output.h"
 #include "player.h"
 #include "registry.h"
+#include "utils.h"
+#include <cstdlib>
 
 #include <lcf/reader_util.h>
 
@@ -124,6 +126,18 @@ FileFinder_RTP::FileFinder_RTP(bool no_rtp, bool no_rtp_warnings, std::string rt
 
 	std::vector<std::string> env_paths;
 
+	// RocketRPG: environment values are UTF-8 here. CRT getenv returns the ANSI code page, which broke RTP paths
+	// with Korean/Japanese folder names.
+	auto getenv_utf8 = [](const char* name) -> std::string {
+#ifdef _WIN32
+		const wchar_t* w = _wgetenv(Utils::ToWideString(name).c_str());
+		return w ? Utils::FromWideString(w) : std::string();
+#else
+		const char* v = std::getenv(name);
+		return v ? std::string(v) : std::string();
+#endif
+	};
+
 	// Windows paths are split by semicolon, Unix paths by colon
 	std::function<bool(char32_t)> f = [](char32_t t) {
 #ifdef _WIN32
@@ -133,13 +147,13 @@ FileFinder_RTP::FileFinder_RTP(bool no_rtp, bool no_rtp_warnings, std::string rt
 #endif
 	};
 
-	if (Player::IsRPG2k() && getenv("RPG2K_RTP_PATH"))
-		env_paths = Utils::Tokenize(getenv("RPG2K_RTP_PATH"), f);
-	else if (Player::IsRPG2k3() && getenv("RPG2K3_RTP_PATH"))
-		env_paths = Utils::Tokenize(getenv("RPG2K3_RTP_PATH"), f);
+	if (Player::IsRPG2k() && !getenv_utf8("RPG2K_RTP_PATH").empty())
+		env_paths = Utils::Tokenize(getenv_utf8("RPG2K_RTP_PATH"), f);
+	else if (Player::IsRPG2k3() && !getenv_utf8("RPG2K3_RTP_PATH").empty())
+		env_paths = Utils::Tokenize(getenv_utf8("RPG2K3_RTP_PATH"), f);
 
-	if (getenv("RPG_RTP_PATH")) {
-		std::vector<std::string> tmp = Utils::Tokenize(getenv("RPG_RTP_PATH"), f);
+	if (!getenv_utf8("RPG_RTP_PATH").empty()) {
+		std::vector<std::string> tmp = Utils::Tokenize(getenv_utf8("RPG_RTP_PATH"), f);
 		env_paths.insert(env_paths.end(), tmp.begin(), tmp.end());
 	}
 
