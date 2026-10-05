@@ -22,11 +22,13 @@
 #include "game_map.h"
 #include "game_message.h"
 #include "game_player.h"
+#include "input.h"
 #include "main_data.h"
 #include "player.h"
 #include "scene.h"
 #include "text.h"
 #include "utils.h"
+#include "window_message.h"
 #include <lcf/rpg/eventpage.h>
 #include <lcf/rpg/moveroute.h>
 #include <lcf/rpg/movecommand.h>
@@ -74,16 +76,20 @@ struct State {
 	std::vector<Game_Character*> chars;
 } ex;
 
-int DirOfVk(int vk) {
-	switch (vk) {
-		case 0x28: case 0x62: return Game_Character::Down;
-		case 0x25: case 0x64: return Game_Character::Left;
-		case 0x27: case 0x66: return Game_Character::Right;
-		case 0x26: case 0x68: return Game_Character::Up;
-		default: return -1;
-	}
+// 참가자 키는 방장 Player의 키 배치(설정에서 바꾼 것 포함)를 그대로 따릅니다: 그 키가 묶인 버튼으로 판단.
+bool VkIs(int vk, Input::InputButton button) {
+	auto key = RocketBridge::KeyOfVk(vk);
+	auto* src = Input::GetInputSource();
+	return key != Input::Keys::NONE && src && src->GetButtonMappings().Has({button, key});
 }
-bool IsOkVk(int vk) { return vk == 0x0D || vk == 0x20 || vk == 0x5A; }
+int DirOfVk(int vk) {
+	if (VkIs(vk, Input::DOWN)) return Game_Character::Down;
+	if (VkIs(vk, Input::LEFT)) return Game_Character::Left;
+	if (VkIs(vk, Input::RIGHT)) return Game_Character::Right;
+	if (VkIs(vk, Input::UP)) return Game_Character::Up;
+	return -1;
+}
+bool IsOkVk(int vk) { return VkIs(vk, Input::DECISION); }
 bool IsDashVk(int vk) { return vk == 0x10 || vk == 0xA0 || vk == 0xA1; }
 
 std::vector<std::string> Split(const std::string& s, char sep) {
@@ -245,7 +251,9 @@ void Key(const std::string& id, int vk, bool down) {
 		if (down) g.order.push_back(d);
 	}
 	if (IsDashVk(vk)) g.dash = down;
-	if (down && IsOkVk(vk) && g.ch) Action(*g.ch);
+	if (!down || !IsOkVk(vk)) return;
+	if (Game_Message::IsMessageActive()) RocketBridge::GuestAdvance();   // 대화 중: 방장처럼 대사 넘김 (선택지는 방장이 고름)
+	else if (g.ch) Action(*g.ch);
 }
 
 void Held(const std::string& id, const std::vector<int>& vks) {
@@ -364,7 +372,7 @@ void DrawLabels(Bitmap& surface, int ox, int oy) {
 namespace RocketExtra {
 namespace {
 struct SelfTestState {
-	int et = 0, wait = 0, wait2 = 0, viol = 0, off_x = -1, start_x = 0, start_y = 0, moved = -1, tp_x = -1, lock_x = 0, lock_y = 0;
+	int et = 0, wait = 0, wait2 = 0, wait3 = 0, viol = 0, off_x = -1, start_x = 0, start_y = 0, moved = -1, tp_x = -1, lock_x = 0, lock_y = 0;
 	bool summoned = false;
 	Game_Event* target = nullptr;
 } tst;
@@ -474,6 +482,26 @@ int SelfTestStep(const std::function<void(const std::string&)>& log) {
 		Action(*c);
 		bool ok = tst.target->IsWaitingForegroundExecution() || Game_Map::GetInterpreter().IsRunning();
 		log(std::string("EXTRA talk ") + (ok ? "ok" : "FAIL") + " event " + std::to_string(tst.target->GetId()));
+	}
+	// 1.1.4: 참가자 키는 Player 키 배치를 따름 (결정 = Enter/Space/Z, C는 취소, 숫자판 2 = 아래)
+	if (et == 214) {
+		bool ok = IsOkVk(0x0D) && IsOkVk(0x20) && IsOkVk(0x5A) && !IsOkVk(0x43) && !IsOkVk(0x28) &&
+			DirOfVk(0x28) == Game_Character::Down && DirOfVk(0x62) == Game_Character::Down && DirOfVk(0x5A) < 0;
+		log(std::string("EXTRA keys follow the Player mapping -> ") + (ok ? "ok" : "FAIL"));
+	}
+	// 1.1.4: 대화가 입력을 기다리면 참가자 결정 키로 넘어감 (방장 키는 누르지 않음)
+	if (et == 215 && c && tst.target) {
+		auto* w = Game_Message::GetWindow();
+		bool waiting = Game_Message::IsMessageActive() && w && w->GetPause();
+		if (!waiting && ++tst.wait3 < 600) { tst.et = 215; return 0; }
+		if (!waiting) { log("EXTRA guest advance skipped (no message waiting)"); tst.wait3 = -1; }
+		else { Key("t1", 0x0D, true); Key("t1", 0x0D, false); tst.wait3 = 0; }
+	}
+	if (et == 216 && c && tst.target && tst.wait3 >= 0) {
+		auto* w = Game_Message::GetWindow();
+		bool still = Game_Message::IsMessageActive() && w && w->GetPause();
+		if (still && ++tst.wait3 < 15) { tst.et = 216; return 0; }
+		log(std::string("EXTRA guest advance -> ") + (still ? "FAIL message still waiting" : "ok"));
 	}
 	if (et == 230) {
 		SetMode(false);

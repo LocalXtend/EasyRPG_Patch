@@ -51,6 +51,12 @@ namespace RocketBridge {
 	/** Window_Message is waiting for DECISION: returns true when auto/skip/advance should confirm it. */
 	bool WantAdvance();
 
+	/** Multiplayer extra mode: a participant pressed decision while a message is shown (advances it like the host would). */
+	void GuestAdvance();
+
+	/** Windows virtual key -> Player key (multiplayer participant keys). */
+	Input::Keys::InputKey KeyOfVk(int vk);
+
 	/** Dialogue started / finished (for the launcher's Ren'Py quick menu and dialogue log). */
 	void OnMessageStart(const std::vector<std::string>& lines, int choices);
 	void OnMessageEnd();

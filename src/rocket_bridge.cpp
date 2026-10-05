@@ -78,6 +78,8 @@ struct State {
 	float auto_speed = 1.0f;
 	bool skip = false;
 	bool force_advance = false;
+	bool guest_ok = false;            // 멀티 엑스트라 모드: 참가자가 대화 중에 결정 키를 누름 (방장처럼 대사를 넘김)
+	Clock::time_point guest_ok_at;
 	bool esp = false;
 	bool esp_share = false;           // 멀티: 방송 화면에도 ESP를 그림 (참가자가 도구 권한이 있을 때)
 	int choice_gen = 0;               // 선택지가 열릴 때마다 하나씩 (지난 선택지의 투표를 가려냄)
@@ -765,12 +767,29 @@ bool Skip() {
 	return st.enabled && st.skip && st.msg_busy;
 }
 
+void GuestAdvance() {
+	st.guest_ok = true;
+	st.guest_ok_at = Clock::now();
+}
+
+Input::Keys::InputKey KeyOfVk(int vk) {
+	return VkToKey(vk);
+}
+
 bool WantAdvance() {
 	if (!st.enabled || !st.msg_busy) return false;
 	if (st.force_advance) {
 		st.force_advance = false;
 		st.waiting = false;
 		return true;
+	}
+	// 참가자 결정 키: 대화창이 입력을 기다리지 않는 사이에 누른 것은 0.25초만 기억 (늦게 다음 대사까지 넘기지 않게)
+	if (st.guest_ok) {
+		st.guest_ok = false;
+		if (Clock::now() - st.guest_ok_at < std::chrono::milliseconds(250)) {
+			st.waiting = false;
+			return true;
+		}
 	}
 	if (st.skip) return true;
 	if (!st.auto_msg) {
