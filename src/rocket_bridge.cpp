@@ -61,6 +61,8 @@ constexpr char NL = '\x1D';
 
 using Clock = std::chrono::steady_clock;
 
+struct SaveResult { bool loading; int slot; bool success; };
+
 struct State {
 	bool enabled = false;
 	std::string pipe_name;
@@ -101,6 +103,7 @@ struct State {
 	Clock::time_point wait_since{};
 	bool waiting = false;
 	std::string last_telemetry;
+	std::vector<SaveResult> save_results;
 } st;
 
 bool Init() {
@@ -717,6 +720,13 @@ void Tick() {
 	Connect();
 	if (st.pipe == INVALID_HANDLE_VALUE) return;
 #endif
+	// Report outside the save/load call: pipe replies can execute another launcher command.
+	auto results = std::move(st.save_results);
+	st.save_results.clear();
+	for (const auto& result : results) {
+		SendLine("S", std::string("{\"action\":\"") + (result.loading ? "load" : "save") +
+			"\",\"slot\":" + std::to_string(result.slot) + ",\"success\":" + (result.success ? "true}" : "false}"));
+	}
 	// 파이프 왕복은 게임 루프를 잠깐 멈추므로 최소로: 6프레임마다 텔레메트리(바뀐 경우) 또는 하트비트 한 번.
 	// 답에 실려 오는 명령은 이 왕복으로 받습니다. (ESP는 게임 화면에 직접 그리므로 보내지 않습니다)
 	if (st.frame % 3 == 0) {
@@ -739,6 +749,10 @@ void Tick() {
 float SpeedFactor() {
 	if (at.enabled && !at.done) return 4.0f; // autotest runs fast
 	return st.enabled ? st.speed : 1.0f;
+}
+
+void OnSaveResult(bool loading, int slot, bool success) {
+	if (Init()) st.save_results.push_back({loading, slot, success});
 }
 
 bool Embedded() {

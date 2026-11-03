@@ -65,6 +65,9 @@ namespace RocketBridge {
 	void OnChoiceStart(const std::vector<std::string>& items, const std::vector<bool>& enabled);
 	void OnChoiceEnd(int picked);
 
+	/** A save stream has been flushed/closed, or a loaded map has finished applying its state. */
+	void OnSaveResult(bool loading, int slot, bool success);
+
 	/**
 	 * Multiplayer: copies the finished game frame (before brightness/CRT/ESP) into the shared memory named by
 	 * RR_FRAME_SHM so RocketRPG can stream it. Does nothing unless RocketRPG says it is reading.

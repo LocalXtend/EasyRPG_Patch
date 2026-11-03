@@ -42,6 +42,7 @@
 #include "output.h"
 #include "player.h"
 #include "scene_save.h"
+#include "rocket_bridge.h"
 #include "translation.h"
 #include "version.h"
 
@@ -84,10 +85,16 @@ bool Scene_Save::Save(const FilesystemView& fs, int slot_id, bool prepare_save) 
 
 	if (!save_stream) {
 		Output::Warning("Failed saving to {}", filename);
+		RocketBridge::OnSaveResult(false, slot_id, false);
 		return false;
 	}
 
-	return Save(save_stream, slot_id, prepare_save);
+	bool result = Save(save_stream, slot_id, prepare_save);
+	save_stream.flush();
+	result = result && static_cast<bool>(save_stream);
+	save_stream.Close();
+	RocketBridge::OnSaveResult(false, slot_id, result);
+	return result;
 }
 
 bool Scene_Save::Save(std::ostream& os, int slot_id, bool prepare_save) {

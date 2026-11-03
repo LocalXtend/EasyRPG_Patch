@@ -77,6 +77,7 @@
 #include "game_quit.h"
 #include "scene_settings.h"
 #include "scene_title.h"
+#include "rocket_bridge.h"
 #include "instrumentation.h"
 #include "transition.h"
 #include <lcf/scope_guard.h>
@@ -93,7 +94,6 @@
 #ifndef EMSCRIPTEN
 // This is not used on Emscripten.
 #include "exe_reader.h"
-#include "rocket_bridge.h"
 #endif
 
 using namespace std::chrono_literals;
@@ -1168,6 +1168,7 @@ void Player::LoadSavegame(const std::string& save_name, int save_id) {
 
 	auto save_stream = FileFinder::Save().OpenInputStream(save_name);
 	if (!save_stream) {
+		RocketBridge::OnSaveResult(true, save_id, false);
 		Output::Error("Error loading {}", save_name);
 		return;
 	}
@@ -1175,6 +1176,7 @@ void Player::LoadSavegame(const std::string& save_name, int save_id) {
 	std::unique_ptr<lcf::rpg::Save> save = lcf::LSD_Reader::Load(save_stream, encoding);
 
 	if (!save.get()) {
+		RocketBridge::OnSaveResult(true, save_id, false);
 		Output::ErrorStr(lcf::LcfReader::GetError());
 		return;
 	}
@@ -1243,6 +1245,7 @@ void Player::LoadSavegame(const std::string& save_name, int save_id) {
 				IncFrame();
 				static_cast<Scene_Map*>(Scene::instance.get())->StartFromSave(save_id);
 			}
+			RocketBridge::OnSaveResult(true, save_id, true);
 		}
 	);
 
