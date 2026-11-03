@@ -61,6 +61,7 @@ void Scene_Save::Start() {
 }
 
 void Scene_Save::Action(int index) {
+	if (!RocketBridge::CanSave()) return;
 	Save(fs, index + 1);
 
 	Scene::Pop();
@@ -78,6 +79,7 @@ std::string Scene_Save::GetSaveFilename(const FilesystemView& fs, int slot_id) {
 }
 
 bool Scene_Save::Save(const FilesystemView& fs, int slot_id, bool prepare_save) {
+	if (!RocketBridge::CanSave()) return false;
 	const auto filename = GetSaveFilename(fs, slot_id);
 	Output::Debug("Saving to {}", filename);
 
@@ -98,6 +100,7 @@ bool Scene_Save::Save(const FilesystemView& fs, int slot_id, bool prepare_save) 
 }
 
 bool Scene_Save::Save(std::ostream& os, int slot_id, bool prepare_save) {
+	if (!RocketBridge::CanSave()) return false;
 	lcf::rpg::Save save;
 	auto& title = save.title;
 	// TODO: Maybe find a better place to setup the save file?

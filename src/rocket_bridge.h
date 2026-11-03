@@ -24,6 +24,10 @@ namespace RocketBridge {
 	/** Running inside the RocketRPG window (RR_BRIDGE_PIPE set): the window must never go fullscreen. */
 	bool Embedded();
 
+	/** Session permissions are initialized before IPC connects and remain locked on disconnect. */
+	bool CanStartGame();
+	bool CanSave();
+
 	/** Called once per displayed frame from Player::MainLoop. */
 	void Tick();
 
@@ -61,7 +65,7 @@ namespace RocketBridge {
 	void OnMessageStart(const std::vector<std::string>& lines, int choices);
 	void OnMessageEnd();
 
-	/** Choice selection opened (texts, selectable) / closed with the picked index: for the launcher's multiplayer vote. */
+	/** Choice selection opened / closed: shared-progress input lock. */
 	void OnChoiceStart(const std::vector<std::string>& items, const std::vector<bool>& enabled);
 	void OnChoiceEnd(int picked);
 

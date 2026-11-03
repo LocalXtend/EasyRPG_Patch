@@ -5,6 +5,7 @@
  */
 
 #include "rocket_bridge.h"
+#include "rocket_session_access.h"
 #include "rocket_extra.h"
 
 #include <algorithm>
@@ -84,7 +85,7 @@ struct State {
 	Clock::time_point guest_ok_at;
 	bool esp = false;
 	bool esp_share = false;           // 멀티: 방송 화면에도 ESP를 그림 (참가자가 도구 권한이 있을 때)
-	int choice_gen = 0;               // 선택지가 열릴 때마다 하나씩 (지난 선택지의 투표를 가려냄)
+	int choice_gen = 0;               // 선택지가 열릴 때마다 새 번호로 지난 입력과 구분
 	bool choice_open = false;
 	bool remote_ctl = false;          // 멀티: 참가자 조종 중 (매 프레임 파이프 왕복으로 키를 바로 받음)
 	std::vector<int> remote_vks;      // 멀티: 참가자가 지금 누르고 있는 키 (윈도우 가상 키)
@@ -104,12 +105,25 @@ struct State {
 	bool waiting = false;
 	std::string last_telemetry;
 	std::vector<SaveResult> save_results;
+	RocketBridge::SessionAccess access;
+	bool access_valid = true;
+	bool access_denied = false;
+	std::string access_sent;
 } st;
 
 bool Init() {
 	static bool inited = false;
 	if (!inited) {
 		inited = true;
+		auto env = [](const char* name) { const char* value = std::getenv(name); return value ? std::string_view(value) : std::string_view(); };
+		const auto role = env("RR_SESSION_ROLE");
+		if (!role.empty() || !env("RR_SESSION_START").empty() || !env("RR_SESSION_REVISION").empty()) {
+			auto access = RocketBridge::ParseSessionAccess(role, env("RR_SESSION_START"), env("RR_SESSION_REVISION"));
+			if (access) st.access = *access;
+			else { st.access_valid = false; st.access = {RocketBridge::SessionRole::Guest, false, 0}; }
+		} else if (!env("RR_SAVE_DIR").empty()) {
+			st.access = {RocketBridge::SessionRole::Guest, false, 0};
+		}
 		const char* p = std::getenv("RR_BRIDGE_PIPE");
 		if (p && *p) {
 			st.enabled = true;
@@ -160,6 +174,8 @@ void Connect() {
 		return;
 	}
 	st.pipe = h;
+	st.access_sent.clear();
+	st.last_telemetry.clear();
 }
 
 bool ReadLine(std::string& out) {
@@ -242,6 +258,7 @@ void Notice(const std::string& msg) {
 }
 
 void QuickSave() {
+	if (!RocketBridge::CanSave()) return;
 	if (!OnMap()) {
 		Notice("맵 화면에서만 퀵 세이브할 수 있습니다");
 		return;
@@ -252,6 +269,7 @@ void QuickSave() {
 }
 
 void QuickLoad() {
+	if (!RocketBridge::CanStartGame()) return;
 	auto fs = FileFinder::Save();
 	std::string name = fs.FindFile("Save01.lsd");
 	if (name.empty()) {
@@ -286,6 +304,13 @@ void Handle(const std::string& cmd) {
 	auto argi = [&](size_t i, int def) { try { return std::stoi(arg(i)); } catch (...) { return def; } };
 
 	if (k == "pause") st.paused = arg(1) == "1";
+	else if (k == "session") {
+		auto access = RocketBridge::ParseSessionAccess(arg(1), arg(2), arg(3));
+		if (access && st.access_valid) {
+			RocketBridge::ApplySessionAccess(st.access, *access);
+			st.access_sent.clear();
+		}
+	}
 	else if (k == "speed") st.speed = std::max(0.25f, std::min(argf(1, 1.0f), 16.0f));
 	else if (k == "noclip") st.noclip = arg(1) == "1";
 	else if (k == "auto") { st.auto_msg = arg(1) == "1"; st.auto_speed = std::max(0.2f, argf(2, 1.0f)); }
@@ -721,6 +746,14 @@ void Tick() {
 	if (st.pipe == INVALID_HANDLE_VALUE) return;
 #endif
 	// Report outside the save/load call: pipe replies can execute another launcher command.
+	const char* role = st.access.role == SessionRole::Solo ? "solo" : st.access.role == SessionRole::Host ? "host" : "guest";
+	std::string access = std::string("{\"role\":\"") + role + "\",\"canStart\":" + (st.access.can_start ? "true" : "false") +
+		",\"supported\":" + (st.access_valid ? "true" : "false") + ",\"revision\":" + std::to_string(st.access.revision) + "}";
+	if (access != st.access_sent) { st.access_sent = access; SendLine("A", access); }
+	if (st.access_denied) {
+		st.access_denied = false;
+		Notice(st.access.role == SessionRole::Guest ? "게임 시작·저장·불러오기는 방장이 진행합니다." : "참가자가 준비될 때까지 시작·불러오기를 기다려 주세요.");
+	}
 	auto results = std::move(st.save_results);
 	st.save_results.clear();
 	for (const auto& result : results) {
@@ -757,6 +790,20 @@ void OnSaveResult(bool loading, int slot, bool success) {
 
 bool Embedded() {
 	return Init();
+}
+
+bool CanStartGame() {
+	Init();
+	const bool allowed = st.access_valid && st.access.can_start;
+	if (!allowed) st.access_denied = true;
+	return allowed;
+}
+
+bool CanSave() {
+	Init();
+	const bool allowed = st.access_valid && st.access.role != SessionRole::Guest;
+	if (!allowed) st.access_denied = true;
+	return allowed;
 }
 
 bool Paused() {

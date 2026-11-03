@@ -1149,6 +1149,7 @@ static void OnMapSaveFileReady(FileRequestResult*, lcf::rpg::Save save) {
 }
 
 void Player::LoadSavegame(const std::string& save_name, int save_id) {
+	if (!RocketBridge::CanStartGame()) return;
 	Output::Debug("Loading Save {}", save_name);
 
 	bool load_on_map = Scene::instance->type == Scene::Map;
@@ -1276,6 +1277,7 @@ static void OnMapFileReady(FileRequestResult*) {
 }
 
 void Player::SetupNewGame() {
+	if (!RocketBridge::CanStartGame()) return;
 	Main_Data::game_system->BgmFade(800, true);
 	Main_Data::game_system->ResetFrameCounter();
 	auto title = Scene::Find(Scene::Title);

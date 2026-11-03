@@ -21,6 +21,7 @@
 #include "output.h"
 #include "player.h"
 #include "scene_load.h"
+#include "rocket_bridge.h"
 #include "scene_map.h"
 
 Scene_Load::Scene_Load() :
@@ -29,6 +30,7 @@ Scene_Load::Scene_Load() :
 }
 
 void Scene_Load::Action(int index) {
+	if (!RocketBridge::CanStartGame()) return;
 	std::string save_name = fs.FindFile(fmt::format("Save{:02d}.lsd", index + 1));
 
 	Player::LoadSavegame(save_name, index + 1);
