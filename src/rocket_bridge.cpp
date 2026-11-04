@@ -365,7 +365,7 @@ void HandleCheckpoint(const std::string& action, const std::string& id, const st
 		if (st.checkpoint_render_frame >= 0) throw std::runtime_error("Checkpoint operation already running");
 		if (st.checkpoint_suspended && action != "resume") throw std::runtime_error("Progress is suspended");
 		if (action == "suspend") {
-			if (st.access.role != RocketBridge::SessionRole::Guest) throw std::runtime_error("Only a guest can suspend progress");
+			if (st.access.role == RocketBridge::SessionRole::Solo) throw std::runtime_error("Only multiplayer can suspend progress");
 			if (!st.checkpoint_lease.empty() || st.entry_held) throw std::runtime_error("Progress is already held");
 			st.suspension_paused = st.paused;
 			st.checkpoint_suspended = true;
@@ -378,7 +378,7 @@ void HandleCheckpoint(const std::string& action, const std::string& id, const st
 			return;
 		}
 		if (action == "resume") {
-			if (st.access.role != RocketBridge::SessionRole::Guest || !st.checkpoint_suspended || payload != st.checkpoint_lease || st.checkpoint_revision != st.access.revision)
+			if (st.access.role == RocketBridge::SessionRole::Solo || !st.checkpoint_suspended || payload != st.checkpoint_lease || st.checkpoint_revision != st.access.revision)
 				throw std::runtime_error("Stale progress suspension");
 			ResumeSuspension();
 			CheckpointReply(id, true);
@@ -471,9 +471,9 @@ void Handle(const std::string& cmd) {
 		st.checkpoint_commands.erase(std::remove_if(st.checkpoint_commands.begin(), st.checkpoint_commands.end(),
 			[&](const auto& command) { return command.id == id; }), st.checkpoint_commands.end());
 		if (st.checkpoint_lease == id && st.checkpoint_suspended && st.access_valid &&
-			st.checkpoint_revision == st.access.revision && st.access.role == RocketBridge::SessionRole::Guest) ResumeSuspension();
+			st.checkpoint_revision == st.access.revision && st.access.role != RocketBridge::SessionRole::Solo) ResumeSuspension();
 		else if (st.checkpoint_lease == id) { st.checkpoint_render_frame = -1; st.checkpoint_complete = false; }
-		if (st.checkpoint_lease.empty() && st.access_valid && st.access.role == RocketBridge::SessionRole::Guest) CheckpointReply(id, true, {}, {}, true);
+		if (st.checkpoint_lease.empty() && st.access_valid && st.access.role != RocketBridge::SessionRole::Solo) CheckpointReply(id, true, {}, {}, true);
 	}
 	else if (k == "pause") st.paused = arg(1) == "1";
 	else if (k == "session") {
