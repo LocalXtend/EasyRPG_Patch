@@ -126,6 +126,7 @@ struct State {
 	long long checkpoint_render_frame = -1;
 	bool checkpoint_host = false;
 	bool checkpoint_complete = false;
+	bool checkpoint_suspended = false, suspension_paused = false;
 	bool entry_held = false, entry_paused = false;
 	std::optional<bool> entry_pending_pause;
 	std::vector<CheckpointCommand> checkpoint_commands;
@@ -343,9 +344,17 @@ RocketCheckpoint::Json CaptureCheckpointData() {
 	return RocketCheckpoint::Parse(data.dump());
 }
 
-void CheckpointReply(const std::string& id, bool ok, const std::string& data = {}, const std::string& error = {}) {
+void CheckpointReply(const std::string& id, bool ok, const std::string& data = {}, const std::string& error = {}, bool cancelled = false) {
 	SendLine("K", RocketCheckpoint::Json{{"id", id}, {"ok", ok}, {"held", st.checkpoint_lease},
-		{"paused", st.paused}, {"speed", st.speed}, {"data", data}, {"error", error}}.dump());
+		{"paused", st.paused}, {"speed", st.speed}, {"data", data}, {"error", error}, {"cancelled", cancelled}}.dump());
+}
+
+void ResumeSuspension() {
+	st.paused = st.suspension_paused;
+	st.checkpoint_suspended = false;
+	st.checkpoint_lease.clear();
+	st.remote_vks.clear();
+	Audio().BGM_Resume();
 }
 
 void HandleCheckpoint(const std::string& action, const std::string& id, const std::string& revision, const std::string& payload) {
@@ -354,6 +363,27 @@ void HandleCheckpoint(const std::string& action, const std::string& id, const st
 		if (!std::regex_match(id, std::regex("[0-9a-f]{32}")) || revision != std::to_string(st.access.revision) || !st.access_valid)
 			throw std::runtime_error("Invalid checkpoint request");
 		if (st.checkpoint_render_frame >= 0) throw std::runtime_error("Checkpoint operation already running");
+		if (st.checkpoint_suspended && action != "resume") throw std::runtime_error("Progress is suspended");
+		if (action == "suspend") {
+			if (st.access.role != RocketBridge::SessionRole::Guest) throw std::runtime_error("Only a guest can suspend progress");
+			if (!st.checkpoint_lease.empty() || st.entry_held) throw std::runtime_error("Progress is already held");
+			st.suspension_paused = st.paused;
+			st.checkpoint_suspended = true;
+			st.checkpoint_lease = id;
+			st.checkpoint_revision = st.access.revision;
+			st.paused = true;
+			st.remote_vks.clear();
+			Audio().BGM_Pause();
+			CheckpointReply(id, true);
+			return;
+		}
+		if (action == "resume") {
+			if (st.access.role != RocketBridge::SessionRole::Guest || !st.checkpoint_suspended || payload != st.checkpoint_lease || st.checkpoint_revision != st.access.revision)
+				throw std::runtime_error("Stale progress suspension");
+			ResumeSuspension();
+			CheckpointReply(id, true);
+			return;
+		}
 		if (action == "release") {
 			if (payload != st.checkpoint_lease || st.checkpoint_lease.empty() || st.checkpoint_revision != st.access.revision)
 				throw std::runtime_error("Stale checkpoint release");
@@ -440,7 +470,10 @@ void Handle(const std::string& cmd) {
 		auto id = arg(1);
 		st.checkpoint_commands.erase(std::remove_if(st.checkpoint_commands.begin(), st.checkpoint_commands.end(),
 			[&](const auto& command) { return command.id == id; }), st.checkpoint_commands.end());
-		if (st.checkpoint_lease == arg(1)) { st.checkpoint_render_frame = -1; st.checkpoint_complete = false; }
+		if (st.checkpoint_lease == id && st.checkpoint_suspended && st.access_valid &&
+			st.checkpoint_revision == st.access.revision && st.access.role == RocketBridge::SessionRole::Guest) ResumeSuspension();
+		else if (st.checkpoint_lease == id) { st.checkpoint_render_frame = -1; st.checkpoint_complete = false; }
+		if (st.checkpoint_lease.empty() && st.access_valid && st.access.role == RocketBridge::SessionRole::Guest) CheckpointReply(id, true, {}, {}, true);
 	}
 	else if (k == "pause") st.paused = arg(1) == "1";
 	else if (k == "session") {
