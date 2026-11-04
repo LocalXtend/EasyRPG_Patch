@@ -7,6 +7,11 @@
 #include "rocket_bridge.h"
 #include "rocket_session_access.h"
 #include "rocket_extra.h"
+#include "rocket_checkpoint_packet.h"
+#include "audio.h"
+#include "game_system.h"
+#include "game_actors.h"
+#include "rand.h"
 
 #include <algorithm>
 #include <chrono>
@@ -63,6 +68,7 @@ constexpr char NL = '\x1D';
 using Clock = std::chrono::steady_clock;
 
 struct SaveResult { bool loading; int slot; bool success; };
+struct CheckpointCommand { std::string action, id, revision, data; };
 
 struct State {
 	bool enabled = false;
@@ -109,6 +115,13 @@ struct State {
 	bool access_valid = true;
 	bool access_denied = false;
 	std::string access_sent;
+	std::string checkpoint_lease;
+	RocketCheckpoint::Json checkpoint_data;
+	int64_t checkpoint_revision = -1;
+	long long checkpoint_render_frame = -1;
+	bool checkpoint_host = false;
+	bool checkpoint_complete = false;
+	std::vector<CheckpointCommand> checkpoint_commands;
 } st;
 
 bool Init() {
@@ -160,7 +173,7 @@ void ClosePipe() {
 	if (st.pipe != INVALID_HANDLE_VALUE) CloseHandle(st.pipe);
 	st.pipe = INVALID_HANDLE_VALUE;
 	st.rbuf.clear();
-	st.paused = false;
+	if (st.checkpoint_lease.empty()) st.paused = false;
 	st.next_connect = st.frame + 120;
 }
 
@@ -296,14 +309,115 @@ void DumpData(int max_sw, int max_va) {
 	SendLine("D", sw + "|" + va);
 }
 
+std::string Telemetry();
+
+bool CheckpointMapReady() {
+	return OnMap() && !Scene::IsAsyncPending() && !Game_Message::IsMessageActive()
+		&& !Game_Map::GetInterpreter().IsRunning() && !Main_Data::game_player->IsPendingTeleport()
+		&& !Scene::instance->HasRequestedScene();
+}
+
+RocketCheckpoint::Json CaptureCheckpointData() {
+	std::ostringstream random;
+	random << Rand::GetRNG();
+	const auto locked = Rand::GetRandomLocked();
+	bool paused = st.checkpoint_lease.empty() ? st.paused : st.checkpoint_data.at("paused").get<bool>();
+	RocketCheckpoint::Json data = {{"format", "rocket-map-2k-1"}, {"engine", Player::IsRPG2k3() ? 2 : 1},
+		{"database", lcf::Data::system.save_count}, {"frame", Player::GetFrames()}, {"loadedFrame", Main_Data::game_system->GetLoadedFrameCount()}, {"speed", st.speed}, {"paused", paused},
+		{"rng", random.str()}, {"randomLock", {locked.first, locked.first ? locked.second : 0}}, {"state", Scene_Save::CaptureSaveData()}};
+	return RocketCheckpoint::Parse(data.dump());
+}
+
+void CheckpointReply(const std::string& id, bool ok, const std::string& data = {}, const std::string& error = {}) {
+	SendLine("K", RocketCheckpoint::Json{{"id", id}, {"ok", ok}, {"held", st.checkpoint_lease},
+		{"paused", st.paused}, {"speed", st.speed}, {"data", data}, {"error", error}}.dump());
+}
+
+void HandleCheckpoint(const std::string& action, const std::string& id, const std::string& revision, const std::string& payload) {
+	try {
+		if (!std::regex_match(id, std::regex("[0-9a-f]{32}")) || revision != std::to_string(st.access.revision) || !st.access_valid)
+			throw std::runtime_error("Invalid checkpoint request");
+		if (st.checkpoint_render_frame >= 0) throw std::runtime_error("Checkpoint operation already running");
+		if (action == "release") {
+			if (payload != st.checkpoint_lease || st.checkpoint_lease.empty() || st.checkpoint_revision != st.access.revision)
+				throw std::runtime_error("Stale checkpoint release");
+			if (!st.checkpoint_complete || CaptureCheckpointData() != st.checkpoint_data) throw std::runtime_error("Progress changed while checkpoint was held");
+			st.paused = st.checkpoint_data.at("paused").get<bool>();
+			if (st.checkpoint_host) Audio().BGM_Resume();
+			else Main_Data::game_system->BgmPlay(Main_Data::game_system->GetCurrentBGM());
+			st.checkpoint_lease.clear();
+			st.checkpoint_data = nullptr;
+			CheckpointReply(id, true);
+			return;
+		}
+		if (action != "capture" && action != "apply") throw std::runtime_error("Unknown checkpoint action");
+		const bool capture = action == "capture";
+		if (st.access.role != (capture ? RocketBridge::SessionRole::Host : RocketBridge::SessionRole::Guest))
+			throw std::runtime_error("Invalid checkpoint role");
+		if (capture ? !CheckpointMapReady() : (!CheckpointMapReady() && (!Scene::instance || Scene::instance->type != Scene::Title || Scene::IsAsyncPending())))
+			throw std::runtime_error("Checkpoint scene busy: async=" + std::to_string(Scene::IsAsyncPending()) +
+				", message=" + std::to_string(Game_Message::IsMessageActive()) + ", event=" + std::to_string(OnMap() && Game_Map::GetInterpreter().IsRunning()) +
+				", transfer=" + std::to_string(Main_Data::game_player && Main_Data::game_player->IsPendingTeleport()) +
+				", request=" + std::to_string(Scene::instance && Scene::instance->HasRequestedScene()));
+		auto data = capture ? CaptureCheckpointData() : RocketCheckpoint::Parse(payload);
+		if (!data.is_object() || data.size() != 10 || data.at("format") != "rocket-map-2k-1" ||
+			data.at("engine") != (Player::IsRPG2k3() ? 2 : 1) || data.at("database") != lcf::Data::system.save_count ||
+			!data.at("paused").is_boolean() || !data.at("frame").is_number_integer() || data.at("frame").get<int64_t>() < 0 || data.at("frame").get<int64_t>() > INT32_MAX ||
+			!data.at("loadedFrame").is_number_integer() || data.at("loadedFrame").get<int64_t>() < 0 || data.at("loadedFrame").get<int64_t>() > INT32_MAX ||
+			!data.at("speed").is_number() || data.at("speed").get<double>() < 0.25 || data.at("speed").get<double>() > 16 ||
+			!data.at("rng").is_string() || data.at("rng").get_ref<const std::string&>().size() > 10000 ||
+			!data.at("randomLock").is_array() || data.at("randomLock").size() != 2 || !data.at("randomLock")[0].is_boolean() || !data.at("randomLock")[1].is_number_integer())
+			throw std::runtime_error("Incompatible checkpoint");
+		auto save = RocketCheckpoint::ReadState(data.at("state"));
+		if (save.actors.size() != lcf::Data::actors.size() || save.party_location.map_id <= 0 ||
+			std::none_of(lcf::Data::treemap.maps.begin(), lcf::Data::treemap.maps.end(), [&](const auto& map) { return map.ID == save.party_location.map_id; }))
+			throw std::runtime_error("Checkpoint does not match this game");
+		std::istringstream random(data.at("rng").get<std::string>());
+		Rand::RNG rng;
+		random >> rng;
+		if (!random) throw std::runtime_error("Invalid checkpoint random state");
+		random >> std::ws;
+		if (!random.eof()) throw std::runtime_error("Trailing checkpoint random state");
+		st.checkpoint_data = std::move(data);
+		st.checkpoint_lease = id;
+		st.checkpoint_revision = st.access.revision;
+		st.checkpoint_host = capture;
+		st.checkpoint_complete = capture;
+		st.paused = true;
+		st.remote_vks.clear();
+		Audio().BGM_Pause();
+		if (capture) { CheckpointReply(id, true, st.checkpoint_data.dump()); return; }
+		st.speed = st.checkpoint_data.at("speed").get<float>();
+		st.noclip = st.auto_msg = st.skip = st.force_advance = false;
+		RocketExtra::SetMode(false);
+		Player::LoadCheckpoint(std::move(save), st.checkpoint_data.at("frame").get<int>(), st.checkpoint_data.at("loadedFrame").get<int>());
+		Rand::GetRNG() = rng;
+		if (st.checkpoint_data.at("randomLock")[0].get<bool>()) Rand::LockRandom(st.checkpoint_data.at("randomLock")[1].get<int32_t>());
+		else Rand::UnlockRandom();
+		st.checkpoint_render_frame = st.frame;
+	} catch (const std::exception& error) { CheckpointReply(id, false, {}, error.what()); }
+}
+
 void Handle(const std::string& cmd) {
 	auto f = Split(cmd, SEP_F);
 	const std::string& k = f[0];
 	auto arg = [&](size_t i) -> std::string { return i < f.size() ? f[i] : std::string(); };
 	auto argf = [&](size_t i, float def) { try { return std::stof(arg(i)); } catch (...) { return def; } };
 	auto argi = [&](size_t i, int def) { try { return std::stoi(arg(i)); } catch (...) { return def; } };
+	if (!st.checkpoint_lease.empty() && k != "checkpoint" && k != "checkpoint_cancel" && k != "session" &&
+		k != "esp" && k != "bright" && k != "crt" && k != "font" && k != "mouse" && k != "dump") return;
 
-	if (k == "pause") st.paused = arg(1) == "1";
+	if (k == "checkpoint") {
+		if (st.checkpoint_commands.empty()) st.checkpoint_commands.push_back({arg(1), arg(2), arg(3), arg(4)});
+		else CheckpointReply(arg(2), false, {}, "Checkpoint operation already queued");
+	}
+	else if (k == "checkpoint_cancel") {
+		auto id = arg(1);
+		st.checkpoint_commands.erase(std::remove_if(st.checkpoint_commands.begin(), st.checkpoint_commands.end(),
+			[&](const auto& command) { return command.id == id; }), st.checkpoint_commands.end());
+		if (st.checkpoint_lease == arg(1)) { st.checkpoint_render_frame = -1; st.checkpoint_complete = false; }
+	}
+	else if (k == "pause") st.paused = arg(1) == "1";
 	else if (k == "session") {
 		auto access = RocketBridge::ParseSessionAccess(arg(1), arg(2), arg(3));
 		if (access && st.access_valid) {
@@ -745,6 +859,37 @@ void Tick() {
 	Connect();
 	if (st.pipe == INVALID_HANDLE_VALUE) return;
 #endif
+	// Pipe replies can arrive inside event callbacks; state changes belong at a logical frame boundary.
+	auto checkpoint_commands = std::move(st.checkpoint_commands);
+	st.checkpoint_commands.clear();
+	for (const auto& command : checkpoint_commands) HandleCheckpoint(command.action, command.id, command.revision, command.data);
+	if (st.checkpoint_render_frame >= 0 && st.frame > st.checkpoint_render_frame) {
+		if (Scene::IsAsyncPending()) return;
+		st.checkpoint_render_frame = -1;
+		try {
+			if (st.checkpoint_revision != st.access.revision || st.access.role != SessionRole::Guest || !OnMap() ||
+				!static_cast<Scene_Map*>(Scene::instance.get())->spriteset)
+				throw std::runtime_error("Restored map differs from checkpoint");
+			auto actual = CaptureCheckpointData();
+			if (actual != st.checkpoint_data) {
+				auto differences = RocketCheckpoint::Json::diff(st.checkpoint_data, actual);
+				std::string detail;
+				for (size_t i = 0; i < std::min<size_t>(differences.size(), 12); ++i) {
+					auto path = differences[i].at("path").get<std::string>();
+					detail += path;
+					if (differences[i].at("op") == "replace") {
+						auto key = RocketCheckpoint::Json::json_pointer(path);
+						if (actual.at(key).is_number() && st.checkpoint_data.at(key).is_number()) detail += " " + st.checkpoint_data.at(key).dump() + "=>" + actual.at(key).dump();
+					}
+					detail += "; ";
+				}
+				throw std::runtime_error("Restored map differs from checkpoint: " + detail);
+			}
+			st.checkpoint_complete = true;
+			SendLine("T", Telemetry());
+			CheckpointReply(st.checkpoint_lease, true);
+		} catch (const std::exception& error) { CheckpointReply(st.checkpoint_lease, false, {}, error.what()); }
+	}
 	// Report outside the save/load call: pipe replies can execute another launcher command.
 	const char* role = st.access.role == SessionRole::Solo ? "solo" : st.access.role == SessionRole::Host ? "host" : "guest";
 	std::string access = std::string("{\"role\":\"") + role + "\",\"canStart\":" + (st.access.can_start ? "true" : "false") +

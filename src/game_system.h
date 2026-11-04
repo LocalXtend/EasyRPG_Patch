@@ -87,6 +87,8 @@ public:
 
 	/** Initialize from save game */
 	void SetupFromSave(lcf::rpg::SaveSystem save);
+	int GetLoadedFrameCount() const { return loaded_frame_count; }
+	void SetLoadedFrameCount(int frame) { loaded_frame_count = frame; }
 
 	/** @return save game data */
 	const lcf::rpg::SaveSystem& GetSaveData() const;

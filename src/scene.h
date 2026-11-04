@@ -160,6 +160,8 @@ public:
 	 *	                  on the top should be popped.
 	 */
 	static void Push(std::shared_ptr<Scene> const& new_scene, bool pop_stack_top = false);
+	/** Install a held multiplayer map without running a logical frame or transitions. */
+	static void InstallCheckpointMap(std::shared_ptr<Scene> const& new_scene);
 
 	/**
 	 * Finds the the scene previous to the current, top-most one and

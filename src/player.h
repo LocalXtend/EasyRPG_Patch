@@ -31,6 +31,8 @@
 #include <cstdint>
 #include <optional>
 
+namespace lcf { namespace rpg { class Save; } }
+
 /**
  * Player namespace.
  */
@@ -175,6 +177,8 @@ namespace Player {
 	 * @param save_id ID of the savegame to load
 	 */
 	void LoadSavegame(const std::string& save_file, int save_id = 0);
+	/** Restore a validated, held multiplayer map; does not load a slot or emit save/load events. */
+	void LoadCheckpoint(lcf::rpg::Save save, int frame, int loaded_frame);
 
 	/**
 	 * Starts a new game

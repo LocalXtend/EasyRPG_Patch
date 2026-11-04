@@ -78,6 +78,7 @@ enum PushPopOperation {
 };
 
 int Scene::push_pop_operation = 0;
+namespace { bool main_function_initialized = false; }
 
 lcf::rpg::SaveSystem::Scene Scene::rpgRtSceneFromSceneType(SceneType t) {
 	switch (t) {
@@ -143,7 +144,6 @@ void Scene::ScheduleTransitionIn(Scene::SceneType prev_scene_type) {
 }
 
 void Scene::MainFunction() {
-	static bool init = false;
 
 	if (IsAsyncPending()) {
 		Player::Update(false);
@@ -158,7 +158,7 @@ void Scene::MainFunction() {
 	// The continuation could have caused a new async wait condition, or
 	// it could have changed the scene.
 	if (!IsAsyncPending() && Scene::instance.get() == this) {
-		if (!init) {
+		if (!main_function_initialized) {
 			auto prev_scene = Graphics::UpdateSceneCallback();
 			auto prev_scene_type = prev_scene ? prev_scene->type : Null;
 
@@ -186,7 +186,7 @@ void Scene::MainFunction() {
 
 			ScheduleTransitionIn(prev_scene_type);
 
-			init = true;
+			main_function_initialized = true;
 			return;
 		} else {
 			Player::Update();
@@ -207,7 +207,7 @@ void Scene::MainFunction() {
 			TransitionOut(next_scene);
 		}
 
-		init = false;
+		main_function_initialized = false;
 	}
 }
 
@@ -269,6 +269,18 @@ void Scene::Push(std::shared_ptr<Scene> const& new_scene, bool pop_stack_top) {
 	push_pop_operation = ScenePushed;
 
 	DEBUG_VALIDATE("Push");
+}
+
+void Scene::InstallCheckpointMap(std::shared_ptr<Scene> const& new_scene) {
+	Push(new_scene, instance && instance->type == Map);
+	auto previous = Graphics::UpdateSceneCallback();
+	old_instances.clear();
+	previous.reset();
+	new_scene->SetDelayFrames(0);
+	new_scene->Start();
+	new_scene->initialized = true;
+	push_pop_operation = 0;
+	main_function_initialized = true;
 }
 
 std::shared_ptr<Scene> Scene::Peek() {

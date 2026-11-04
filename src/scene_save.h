@@ -22,6 +22,7 @@
 #include <vector>
 #include "scene.h"
 #include "scene_file.h"
+#include <lcf/rpg/save.h>
 
 /**
  * Scene_Item class.
@@ -42,6 +43,8 @@ public:
 	static std::string GetSaveFilename(const FilesystemView& tree, int slot_id);
 	static bool Save(const FilesystemView& tree, int slot_id, bool prepare_save = true);
 	static bool Save(std::ostream& os, int slot_id, bool prepare_save = true);
+	/** Current map state without changing slots, save counters or files. */
+	static lcf::rpg::Save CaptureSaveData();
 };
 
 #endif

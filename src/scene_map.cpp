@@ -57,8 +57,8 @@ static bool GetRunForegroundEvents(TeleportTarget::Type tt) {
 	return false;
 }
 
-Scene_Map::Scene_Map(int from_save_id)
-	: from_save_id(from_save_id)
+Scene_Map::Scene_Map(int from_save_id, bool checkpoint)
+	: from_save_id(from_save_id), checkpoint(checkpoint)
 {
 	type = Scene::Map;
 
@@ -80,18 +80,20 @@ void Scene_Map::Start() {
 
 	// Called here instead of Scene Load, otherwise wrong graphic stack
 	// is used.
-	if (from_save_id > 0) {
+	// A checkpoint stays silent until the room releases its hold.
+	if (!checkpoint && from_save_id > 0) {
 		auto current_music = Main_Data::game_system->GetCurrentBGM();
 		Main_Data::game_system->BgmStop();
 		Main_Data::game_system->BgmPlay(current_music);
 		Main_Data::game_dynrpg->Load(from_save_id);
-	} else {
+	} else if (!checkpoint) {
 		Game_Map::PlayBgm();
 	}
 
 	Main_Data::game_screen->InitGraphics();
 	Main_Data::game_pictures->InitGraphics();
 	Game_Clock::ResetFrame(Game_Clock::now());
+	if (checkpoint) return;
 
 	Start2(MapUpdateAsyncContext());
 }

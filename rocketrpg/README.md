@@ -39,6 +39,30 @@ pwsh -File rocketrpg\build.ps1      # -> rocketrpg\work\dist\Player.exe + requir
 
 From an MSYS2 UCRT64 shell: `rocketrpg/build.sh [work-dir]`.
 
+## Held map checkpoints
+
+The `checkpoint` bridge command captures a quiet host map, restores it in a guest
+title/map, or releases the matching hold. It does not write/load a save slot or
+increment save counters. Foreground events, messages, transitions and teleports
+must finish first. Parallel interpreter stacks and the engine RNG are included.
+The guest renders a map and verifies its typed state before acknowledging; a
+failed restore stays held and may require another restore or process restart.
+Music playback position, active battles/dialogues and room-wide networking are
+not covered by this primitive.
+
+The JSON adapter is generated from liblcf 0.8.1, including inherited fields and
+record IDs (liblcf equality omits those IDs). Regenerate with:
+
+```text
+python rocketrpg/generate_checkpoint_json.py <liblcf-directory> src/rocket_checkpoint_json.h
+```
+
+`rocketrpg/tests/checkpoint_json_test.cpp` checks typed roundtrips, record IDs and
+parser limits. The fixture helper writes only a separate `.lmu.checkpoint` file;
+use disposable game copies. RocketRPG's `scripts/tests/run_easy_checkpoint.ps1`
+builds that helper, temporarily changes the owned copy's startup triggers, runs
+the actual renderer test and restores the map in `finally` with a hash check.
+
 ## License
 
 EasyRPG Player is licensed under the **GNU GPL v3 or later** (see `COPYING`), and so are these changes and the

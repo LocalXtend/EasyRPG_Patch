@@ -1135,8 +1135,7 @@ void Player::LoadFonts() {
 #endif
 }
 
-static void OnMapSaveFileReady(FileRequestResult*, lcf::rpg::Save save) {
-	auto map = Game_Map::LoadMapFile(Main_Data::game_player->GetMapId());
+static void ApplySaveMap(std::unique_ptr<lcf::rpg::Map> map, lcf::rpg::Save save) {
 	Game_Map::SetupFromSave(
 			std::move(map),
 			std::move(save.map_info),
@@ -1146,6 +1145,49 @@ static void OnMapSaveFileReady(FileRequestResult*, lcf::rpg::Save save) {
 			std::move(save.foreground_event_execstate),
 			std::move(save.panorama),
 			std::move(save.common_events));
+}
+
+static void OnMapSaveFileReady(FileRequestResult*, lcf::rpg::Save save) {
+	ApplySaveMap(Game_Map::LoadMapFile(Main_Data::game_player->GetMapId()), std::move(save));
+}
+
+static void ApplySaveObjects(lcf::rpg::Save& save) {
+	Main_Data::game_switches->SetLowerLimit(lcf::Data::switches.size());
+	Main_Data::game_switches->SetData(std::move(save.system.switches));
+	Main_Data::game_variables->SetLowerLimit(lcf::Data::variables.size());
+	Main_Data::game_variables->SetData(std::move(save.system.variables));
+	Main_Data::game_strings->SetData(std::move(save.system.maniac_strings));
+	Main_Data::game_system->SetupFromSave(std::move(save.system));
+	Main_Data::game_actors->SetSaveData(std::move(save.actors));
+	Main_Data::game_party->SetupFromSave(std::move(save.inventory));
+	Main_Data::game_screen->SetSaveData(std::move(save.screen));
+	Main_Data::game_pictures->SetSaveData(std::move(save.pictures));
+	Main_Data::game_targets->SetSaveData(std::move(save.targets));
+	Main_Data::game_player->SetSaveData(save.party_location);
+	Main_Data::game_windows->SetSaveData(std::move(save.easyrpg_data.windows));
+}
+
+void Player::LoadCheckpoint(lcf::rpg::Save save, int frame, int loaded_frame) {
+	auto map = Game_Map::LoadMapFile(save.party_location.map_id);
+	if (!map) throw std::runtime_error("Checkpoint map could not be loaded");
+	int map_count = (IsRPG2k3() && map->save_count_2k3e > 0) ? map->save_count_2k3e : map->save_count;
+	if (save.party_location.map_save_count != map_count || save.party_location.database_save_count != lcf::Data::system.save_count)
+		throw std::runtime_error("Checkpoint map counts differ: " + std::to_string(save.party_location.map_save_count) + "/" + std::to_string(map_count) +
+			", database " + std::to_string(save.party_location.database_save_count) + "/" + std::to_string(lcf::Data::system.save_count));
+	if (auto title = Scene::Find(Scene::Title)) static_cast<Scene_Title*>(title.get())->OnGameStart();
+	if (Scene::instance->type == Scene::Map) static_cast<Scene_Map*>(Scene::instance.get())->spriteset.reset();
+	int chipset = save.map_info.chipset_id;
+	auto player_graphic = save.party_location;
+	ApplySaveObjects(save);
+	Main_Data::game_player->SetSpriteGraphic(ToString(player_graphic.sprite_name), player_graphic.sprite_id);
+	Main_Data::game_player->SetTransparency(player_graphic.transparency);
+	Main_Data::game_system->SetLoadedFrameCount(loaded_frame);
+	Game_Map::Dispose();
+	ApplySaveMap(std::move(map), std::move(save));
+	Game_Map::SetChipset(chipset);
+	Main_Data::game_system->ReloadSystemGraphic();
+	frames = frame;
+	Scene::InstallCheckpointMap(std::make_shared<Scene_Map>(0, true));
 }
 
 void Player::LoadSavegame(const std::string& save_name, int save_id) {
@@ -1218,19 +1260,7 @@ void Player::LoadSavegame(const std::string& save_name, int save_id) {
 		Scene::PopUntil(Scene::Title);
 	}
 
-	Main_Data::game_switches->SetLowerLimit(lcf::Data::switches.size());
-	Main_Data::game_switches->SetData(std::move(save->system.switches));
-	Main_Data::game_variables->SetLowerLimit(lcf::Data::variables.size());
-	Main_Data::game_variables->SetData(std::move(save->system.variables));
-	Main_Data::game_strings->SetData(std::move(save->system.maniac_strings));
-	Main_Data::game_system->SetupFromSave(std::move(save->system));
-	Main_Data::game_actors->SetSaveData(std::move(save->actors));
-	Main_Data::game_party->SetupFromSave(std::move(save->inventory));
-	Main_Data::game_screen->SetSaveData(std::move(save->screen));
-	Main_Data::game_pictures->SetSaveData(std::move(save->pictures));
-	Main_Data::game_targets->SetSaveData(std::move(save->targets));
-	Main_Data::game_player->SetSaveData(save->party_location);
-	Main_Data::game_windows->SetSaveData(std::move(save->easyrpg_data.windows));
+	ApplySaveObjects(*save);
 
 	int map_id = Main_Data::game_player->GetMapId();
 

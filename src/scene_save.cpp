@@ -99,8 +99,7 @@ bool Scene_Save::Save(const FilesystemView& fs, int slot_id, bool prepare_save) 
 	return result;
 }
 
-bool Scene_Save::Save(std::ostream& os, int slot_id, bool prepare_save) {
-	if (!RocketBridge::CanSave()) return false;
+lcf::rpg::Save Scene_Save::CaptureSaveData() {
 	lcf::rpg::Save save;
 	auto& title = save.title;
 	// TODO: Maybe find a better place to setup the save file?
@@ -132,17 +131,8 @@ bool Scene_Save::Save(std::ostream& os, int slot_id, bool prepare_save) {
 		title.hero_name = ToString(actor->GetName());
 	}
 
-	Main_Data::game_system->SetSaveSlot(slot_id);
 	save.party_location = Main_Data::game_player->GetSaveData();
 	Game_Map::PrepareSave(save);
-
-	if (prepare_save) {
-		// When a translation is loaded always store in Unicode to prevent data loss
-		int codepage = Tr::HasActiveTranslation() ? 65001 : 0;
-
-		lcf::LSD_Reader::PrepareSave(save, PLAYER_SAVEGAME_VERSION, codepage);
-		Main_Data::game_system->IncSaveCount();
-	}
 
 	save.targets = Main_Data::game_targets->GetSaveData();
 	save.system = Main_Data::game_system->GetSaveData();
@@ -162,6 +152,18 @@ bool Scene_Save::Save(std::ostream& os, int slot_id, bool prepare_save) {
 		for (auto& sme: save.map_info.events) {
 			sme.map_id = 0;
 		}
+	}
+	return save;
+}
+
+bool Scene_Save::Save(std::ostream& os, int slot_id, bool prepare_save) {
+	if (!RocketBridge::CanSave()) return false;
+	Main_Data::game_system->SetSaveSlot(slot_id);
+	auto save = CaptureSaveData();
+	if (prepare_save) {
+		int codepage = Tr::HasActiveTranslation() ? 65001 : 0;
+		lcf::LSD_Reader::PrepareSave(save, PLAYER_SAVEGAME_VERSION, codepage);
+		Main_Data::game_system->IncSaveCount();
 	}
 	auto lcf_engine = Player::IsRPG2k3() ? lcf::EngineVersion::e2k3 : lcf::EngineVersion::e2k;
 	bool res = lcf::LSD_Reader::Save(os, save, lcf_engine, Player::encoding);
