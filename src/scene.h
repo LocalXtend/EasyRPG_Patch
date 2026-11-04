@@ -85,6 +85,8 @@ public:
 	 * the stack.
 	 */
 	void MainFunction();
+	/** A bridge command changed the scene outside MainFunction's normal switch detection. */
+	static void OnExternalSceneChange();
 
 	/**
 	 * Start processing.

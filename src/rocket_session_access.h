@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace RocketBridge {
@@ -15,6 +16,21 @@ struct SessionAccess {
 	bool can_start = true;
 	std::int64_t revision = 0;
 };
+
+struct StartRequest {
+	std::string id;
+	std::int64_t revision;
+	std::optional<bool> result;
+};
+
+inline bool ResolveStartRequest(StartRequest& request, const SessionAccess& access, std::string_view id,
+	std::string_view revision, std::string_view current_revision, std::string_view approved) {
+	if (request.result.has_value() || id != request.id || revision != std::to_string(request.revision) ||
+		current_revision != std::to_string(access.revision) || access.role != SessionRole::Host ||
+		(approved != "0" && approved != "1") || (approved == "1" && !access.can_start)) return false;
+	request.result = approved == "1";
+	return true;
+}
 
 inline std::optional<SessionAccess> ParseSessionAccess(std::string_view role, std::string_view allow, std::string_view revision) {
 	SessionAccess value;

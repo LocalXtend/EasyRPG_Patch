@@ -282,7 +282,7 @@ bool Scene_Title::CheckValidPlayerLocation() {
 }
 
 void Scene_Title::CommandNewGame() {
-	if (!RocketBridge::CanStartGame()) return;
+	if (!RocketBridge::AdmitStart("new")) return;
 	if (!CheckValidPlayerLocation()) {
 		Output::Warning("The game has no start location set.");
 	} else {
@@ -293,7 +293,7 @@ void Scene_Title::CommandNewGame() {
 }
 
 void Scene_Title::CommandContinue() {
-	if (!RocketBridge::CanStartGame()) return;
+	if (!RocketBridge::AdmitStart("continue")) return;
 	if (continue_enabled || Input::IsTriggered(Input::SHIFT)) {
 		Main_Data::game_system->SePlay(Main_Data::game_system->GetSystemSE(Main_Data::game_system->SFX_Decision));
 	} else {

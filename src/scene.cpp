@@ -80,6 +80,10 @@ enum PushPopOperation {
 int Scene::push_pop_operation = 0;
 namespace { bool main_function_initialized = false; }
 
+void Scene::OnExternalSceneChange() {
+	main_function_initialized = false;
+}
+
 lcf::rpg::SaveSystem::Scene Scene::rpgRtSceneFromSceneType(SceneType t) {
 	switch (t) {
 		case Null:

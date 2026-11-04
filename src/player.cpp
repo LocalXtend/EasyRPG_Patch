@@ -1223,6 +1223,7 @@ void Player::LoadSavegame(const std::string& save_name, int save_id) {
 		Output::ErrorStr(lcf::LcfReader::GetError());
 		return;
 	}
+	RocketBridge::PrepareSharedMapEntry();
 
 	std::stringstream verstr;
 	int ver = save->easyrpg_data.version;
@@ -1308,6 +1309,7 @@ static void OnMapFileReady(FileRequestResult*) {
 
 void Player::SetupNewGame() {
 	if (!RocketBridge::CanStartGame()) return;
+	RocketBridge::PrepareSharedMapEntry();
 	Main_Data::game_system->BgmFade(800, true);
 	Main_Data::game_system->ResetFrameCounter();
 	auto title = Scene::Find(Scene::Title);

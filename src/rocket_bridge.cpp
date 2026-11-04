@@ -9,6 +9,8 @@
 #include "rocket_extra.h"
 #include "rocket_checkpoint_packet.h"
 #include "audio.h"
+#include "baseui.h"
+#include "game_clock.h"
 #include "game_system.h"
 #include "game_actors.h"
 #include "rand.h"
@@ -19,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <regex>
+#include <random>
 #include <sstream>
 
 #include "bitmap.h"
@@ -111,10 +114,12 @@ struct State {
 	bool waiting = false;
 	std::string last_telemetry;
 	std::vector<SaveResult> save_results;
+	bool quick_load_requested = false;
 	RocketBridge::SessionAccess access;
 	bool access_valid = true;
 	bool access_denied = false;
 	std::string access_sent;
+	std::optional<RocketBridge::StartRequest> start;
 	std::string checkpoint_lease;
 	RocketCheckpoint::Json checkpoint_data;
 	int64_t checkpoint_revision = -1;
@@ -122,6 +127,7 @@ struct State {
 	bool checkpoint_host = false;
 	bool checkpoint_complete = false;
 	bool entry_held = false, entry_paused = false;
+	std::optional<bool> entry_pending_pause;
 	std::vector<CheckpointCommand> checkpoint_commands;
 } st;
 
@@ -174,7 +180,9 @@ void ClosePipe() {
 	if (st.pipe != INVALID_HANDLE_VALUE) CloseHandle(st.pipe);
 	st.pipe = INVALID_HANDLE_VALUE;
 	st.rbuf.clear();
-	if (st.checkpoint_lease.empty() && !st.entry_held) st.paused = false;
+	st.quick_load_requested = false;
+	if (st.checkpoint_lease.empty() && !st.entry_held && !st.start) st.paused = false;
+	if (st.start) st.start->result = false;
 	st.next_connect = st.frame + 120;
 }
 
@@ -283,14 +291,20 @@ void QuickSave() {
 }
 
 void QuickLoad() {
-	if (!RocketBridge::CanStartGame()) return;
+	if (!RocketBridge::AdmitStart("quickload")) return;
 	auto fs = FileFinder::Save();
 	std::string name = fs.FindFile("Save01.lsd");
 	if (name.empty()) {
 		Notice("1번 슬롯에 저장 데이터가 없습니다");
 		return;
 	}
+	const auto previous_scene = Scene::instance;
 	Player::LoadSavegame(name, 1);
+	if (Scene::instance != previous_scene) {
+		Scene::OnExternalSceneChange();
+		// Let the new map initialize; its prepared entry restores the host's original pause.
+		if (st.entry_pending_pause.has_value()) st.paused = false;
+	}
 	Notice("1번 슬롯 퀵 로드 완료");
 }
 
@@ -336,6 +350,7 @@ void CheckpointReply(const std::string& id, bool ok, const std::string& data = {
 
 void HandleCheckpoint(const std::string& action, const std::string& id, const std::string& revision, const std::string& payload) {
 	try {
+		if (st.start) throw std::runtime_error("Game start request is pending");
 		if (!std::regex_match(id, std::regex("[0-9a-f]{32}")) || revision != std::to_string(st.access.revision) || !st.access_valid)
 			throw std::runtime_error("Invalid checkpoint request");
 		if (st.checkpoint_render_frame >= 0) throw std::runtime_error("Checkpoint operation already running");
@@ -406,10 +421,18 @@ void Handle(const std::string& cmd) {
 	auto arg = [&](size_t i) -> std::string { return i < f.size() ? f[i] : std::string(); };
 	auto argf = [&](size_t i, float def) { try { return std::stof(arg(i)); } catch (...) { return def; } };
 	auto argi = [&](size_t i, int def) { try { return std::stoi(arg(i)); } catch (...) { return def; } };
+	if (st.start && k == "checkpoint") { CheckpointReply(arg(2), false, {}, "Game start request is pending"); return; }
+	if (st.start && k != "start_resolve" && k != "session" && k != "esp" && k != "bright" && k != "crt" &&
+		k != "font" && k != "mouse" && k != "dump") return;
 	if ((!st.checkpoint_lease.empty() || st.entry_held) && k != "checkpoint" && k != "checkpoint_cancel" && k != "session" &&
 		k != "esp" && k != "bright" && k != "crt" && k != "font" && k != "mouse" && k != "dump") return;
 
-	if (k == "checkpoint") {
+	if (k == "start_resolve") {
+		bool ok = st.start && RocketBridge::ResolveStartRequest(*st.start, st.access, arg(1), arg(2), arg(3), arg(4));
+		if (!ok) SendLine("V", RocketCheckpoint::Json{{"id", arg(1)}, {"revision", st.access.revision},
+			{"ended", false}, {"ok", false}, {"paused", st.paused}}.dump());
+	}
+	else if (k == "checkpoint") {
 		if (st.checkpoint_commands.empty()) st.checkpoint_commands.push_back({arg(1), arg(2), arg(3), arg(4)});
 		else CheckpointReply(arg(2), false, {}, "Checkpoint operation already queued");
 	}
@@ -423,7 +446,17 @@ void Handle(const std::string& cmd) {
 	else if (k == "session") {
 		auto access = RocketBridge::ParseSessionAccess(arg(1), arg(2), arg(3));
 		if (access && st.access_valid) {
-			RocketBridge::ApplySessionAccess(st.access, *access);
+			auto previous_role = st.access.role;
+			if (RocketBridge::ApplySessionAccess(st.access, *access)) {
+				if (previous_role != st.access.role) {
+					st.quick_load_requested = false;
+					if (st.start) st.start->result = false;
+				}
+				if (st.access.role != RocketBridge::SessionRole::Host && st.entry_pending_pause.has_value()) {
+					st.paused = *st.entry_pending_pause;
+					st.entry_pending_pause.reset();
+				}
+			}
 			st.access_sent.clear();
 		}
 	}
@@ -453,7 +486,7 @@ void Handle(const std::string& cmd) {
 		st.mouse_y = static_cast<int>(argf(2, 0));
 	}
 	else if (k == "qsave") QuickSave();
-	else if (k == "qload") QuickLoad();
+	else if (k == "qload") st.quick_load_requested = true;
 	else if (k == "dump") DumpData(argi(1, 500), argi(2, 200));
 	else if (k == "setsw" && Main_Data::game_switches) {
 		Main_Data::game_switches->Set(argi(1, 0), arg(2) == "1");
@@ -861,6 +894,8 @@ void Tick() {
 	Connect();
 	if (st.pipe == INVALID_HANDLE_VALUE) return;
 #endif
+	// Pipe replies also arrive inside event callbacks; load only after that call stack has returned.
+	if (st.quick_load_requested) { st.quick_load_requested = false; QuickLoad(); }
 	// Pipe replies can arrive inside event callbacks; state changes belong at a logical frame boundary.
 	auto checkpoint_commands = std::move(st.checkpoint_commands);
 	st.checkpoint_commands.clear();
@@ -941,21 +976,75 @@ bool Embedded() {
 
 bool CanStartGame() {
 	Init();
-	const bool allowed = st.access_valid && st.access.can_start;
+	const bool allowed = st.access_valid && st.access.can_start && !st.start;
 	if (!allowed) st.access_denied = true;
 	return allowed;
+}
+
+bool AdmitStart(const char* action) {
+	Init();
+	if (!st.start && st.access_valid && st.access.can_start) return true;
+	if (!st.enabled || !st.access_valid || st.access.role != SessionRole::Host || st.start ||
+		st.entry_held || !st.checkpoint_lease.empty() || !Scene::instance) {
+		st.access_denied = true;
+		return false;
+	}
+	#ifdef _WIN32
+	if (st.pipe == INVALID_HANDLE_VALUE) { st.access_denied = true; return false; }
+	#endif
+	std::string id;
+	try {
+		std::random_device random;
+		for (int i = 0; i < 32; ++i) id += "0123456789abcdef"[random() & 15];
+	} catch (...) { st.access_valid = false; st.access_sent.clear(); return false; }
+	const auto scene = Scene::instance;
+	const bool paused = st.paused;
+	const auto deadline = Clock::now() + std::chrono::seconds(35);
+	st.start = StartRequest{id, st.access.revision, std::nullopt};
+	st.paused = true;
+	st.remote_vks.clear();
+	Audio().BGM_Pause();
+	SendLine("U", RocketCheckpoint::Json{{"id", id}, {"action", action}, {"revision", st.start->revision}}.dump());
+	auto valid = [&] { return st.access_valid && st.access.role == SessionRole::Host && Scene::instance == scene &&
+		!Player::exit_flag && !Player::reset_flag && Clock::now() < deadline; };
+	while (!st.start->result.has_value() && valid()) {
+		if (!DisplayUi->ProcessEvents()) { Player::exit_flag = true; break; }
+		Input::UpdateSystem();
+		Tick();
+		Player::Draw();
+		Game_Clock::ResetFrame(Game_Clock::now());
+		Game_Clock::SleepFor(std::chrono::milliseconds(16));
+	}
+	bool approved = st.start->result.value_or(false) && valid() && st.access.can_start;
+	st.paused = paused;
+	if (!paused) Audio().BGM_Resume();
+	st.remote_vks.clear();
+	Input::ResetKeys();
+	Game_Clock::ResetFrame(Game_Clock::now());
+	// SendLine processes commands in its reply; keep the request locked through that round trip.
+	SendLine("V", RocketCheckpoint::Json{{"id", id}, {"revision", st.access.revision}, {"ended", true},
+		{"ok", approved}, {"paused", paused}}.dump());
+	approved = approved && valid() && st.access.can_start;
+	st.start.reset();
+	return approved;
 }
 
 bool CanSave() {
 	Init();
-	const bool allowed = st.access_valid && st.access.role != SessionRole::Guest;
+	const bool allowed = st.access_valid && st.access.role != SessionRole::Guest && !st.start;
 	if (!allowed) st.access_denied = true;
 	return allowed;
 }
 
+void PrepareSharedMapEntry() {
+	if (Init() && st.access_valid && st.access.role == SessionRole::Host && st.access.can_start)
+		st.entry_pending_pause = st.paused;
+}
+
 bool HoldSharedMapEntry() {
-	if (!Init() || !st.access_valid || st.access.role != SessionRole::Host || !st.access.can_start) return false;
-	if (!st.entry_held) st.entry_paused = st.paused;
+	if (!Init() || !st.access_valid || st.access.role != SessionRole::Host || (!st.access.can_start && !st.entry_pending_pause.has_value())) return false;
+	if (!st.entry_held) st.entry_paused = st.entry_pending_pause.value_or(st.paused);
+	st.entry_pending_pause.reset();
 	st.entry_held = true;
 	st.paused = true;
 	st.remote_vks.clear();

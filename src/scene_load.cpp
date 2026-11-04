@@ -30,7 +30,7 @@ Scene_Load::Scene_Load() :
 }
 
 void Scene_Load::Action(int index) {
-	if (!RocketBridge::CanStartGame()) return;
+	if (!RocketBridge::AdmitStart("load")) return;
 	std::string save_name = fs.FindFile(fmt::format("Save{:02d}.lsd", index + 1));
 
 	Player::LoadSavegame(save_name, index + 1);
