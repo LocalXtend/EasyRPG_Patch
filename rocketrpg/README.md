@@ -50,6 +50,13 @@ failed restore stays held and may require another restore or process restart.
 Music playback position, active battles/dialogues and room-wide networking are
 not covered by this primitive.
 
+When the launcher grants a multiplayer host permission to start/load, a newly
+started map stops before its first event update. Its initial fade is completed
+immediately so drawing does not depend on the paused game clock. Capturing and
+releasing the checkpoint preserves the pause state from before that entry hold.
+Solo/guest startup follows its existing policy. The launcher still needs the
+room-wide Ready/start protocol before granting this permission in normal use.
+
 The JSON adapter is generated from liblcf 0.8.1, including inherited fields and
 record IDs (liblcf equality omits those IDs). Regenerate with:
 

@@ -42,6 +42,7 @@
 #include "scene_load.h"
 #include "output.h"
 #include "game_dynrpg.h"
+#include "rocket_bridge.h"
 
 using namespace std::chrono_literals;
 
@@ -94,6 +95,11 @@ void Scene_Map::Start() {
 	Main_Data::game_pictures->InitGraphics();
 	Game_Clock::ResetFrame(Game_Clock::now());
 	if (checkpoint) return;
+	if (RocketBridge::HoldSharedMapEntry()) {
+		// A logical pause cannot advance the normal startup fade.
+		Transition::instance().InitShow(Transition::TransitionCutIn, this, 0);
+		return;
+	}
 
 	Start2(MapUpdateAsyncContext());
 }

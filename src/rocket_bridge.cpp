@@ -121,6 +121,7 @@ struct State {
 	long long checkpoint_render_frame = -1;
 	bool checkpoint_host = false;
 	bool checkpoint_complete = false;
+	bool entry_held = false, entry_paused = false;
 	std::vector<CheckpointCommand> checkpoint_commands;
 } st;
 
@@ -173,7 +174,7 @@ void ClosePipe() {
 	if (st.pipe != INVALID_HANDLE_VALUE) CloseHandle(st.pipe);
 	st.pipe = INVALID_HANDLE_VALUE;
 	st.rbuf.clear();
-	if (st.checkpoint_lease.empty()) st.paused = false;
+	if (st.checkpoint_lease.empty() && !st.entry_held) st.paused = false;
 	st.next_connect = st.frame + 120;
 }
 
@@ -321,7 +322,7 @@ RocketCheckpoint::Json CaptureCheckpointData() {
 	std::ostringstream random;
 	random << Rand::GetRNG();
 	const auto locked = Rand::GetRandomLocked();
-	bool paused = st.checkpoint_lease.empty() ? st.paused : st.checkpoint_data.at("paused").get<bool>();
+	bool paused = !st.checkpoint_lease.empty() ? st.checkpoint_data.at("paused").get<bool>() : st.entry_held ? st.entry_paused : st.paused;
 	RocketCheckpoint::Json data = {{"format", "rocket-map-2k-1"}, {"engine", Player::IsRPG2k3() ? 2 : 1},
 		{"database", lcf::Data::system.save_count}, {"frame", Player::GetFrames()}, {"loadedFrame", Main_Data::game_system->GetLoadedFrameCount()}, {"speed", st.speed}, {"paused", paused},
 		{"rng", random.str()}, {"randomLock", {locked.first, locked.first ? locked.second : 0}}, {"state", Scene_Save::CaptureSaveData()}};
@@ -346,6 +347,7 @@ void HandleCheckpoint(const std::string& action, const std::string& id, const st
 			if (st.checkpoint_host) Audio().BGM_Resume();
 			else Main_Data::game_system->BgmPlay(Main_Data::game_system->GetCurrentBGM());
 			st.checkpoint_lease.clear();
+			st.entry_held = false;
 			st.checkpoint_data = nullptr;
 			CheckpointReply(id, true);
 			return;
@@ -404,7 +406,7 @@ void Handle(const std::string& cmd) {
 	auto arg = [&](size_t i) -> std::string { return i < f.size() ? f[i] : std::string(); };
 	auto argf = [&](size_t i, float def) { try { return std::stof(arg(i)); } catch (...) { return def; } };
 	auto argi = [&](size_t i, int def) { try { return std::stoi(arg(i)); } catch (...) { return def; } };
-	if (!st.checkpoint_lease.empty() && k != "checkpoint" && k != "checkpoint_cancel" && k != "session" &&
+	if ((!st.checkpoint_lease.empty() || st.entry_held) && k != "checkpoint" && k != "checkpoint_cancel" && k != "session" &&
 		k != "esp" && k != "bright" && k != "crt" && k != "font" && k != "mouse" && k != "dump") return;
 
 	if (k == "checkpoint") {
@@ -949,6 +951,16 @@ bool CanSave() {
 	const bool allowed = st.access_valid && st.access.role != SessionRole::Guest;
 	if (!allowed) st.access_denied = true;
 	return allowed;
+}
+
+bool HoldSharedMapEntry() {
+	if (!Init() || !st.access_valid || st.access.role != SessionRole::Host || !st.access.can_start) return false;
+	if (!st.entry_held) st.entry_paused = st.paused;
+	st.entry_held = true;
+	st.paused = true;
+	st.remote_vks.clear();
+	Audio().BGM_Pause();
+	return true;
 }
 
 bool Paused() {

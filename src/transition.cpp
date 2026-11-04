@@ -71,8 +71,8 @@ void Transition::PrependFlashes(int r, int g, int b, int p, int duration, int it
 }
 
 void Transition::Init(Type type, Scene *linked_scene, int duration, bool next_erase) {
-	// Triggering multiple transitions on a single frame is a bug.
-	assert(!IsActive());
+	// An explicit immediate show may replace the load fade while shared progress is held.
+	assert(duration == 0 || !IsActive());
 
 	if (duration < 0) {
 		duration = GetDefaultFrames(type);

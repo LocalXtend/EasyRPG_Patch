@@ -27,6 +27,8 @@ namespace RocketBridge {
 	/** Session permissions are initialized before IPC connects and remain locked on disconnect. */
 	bool CanStartGame();
 	bool CanSave();
+	/** Hold a newly started/loaded host map before its first event update. */
+	bool HoldSharedMapEntry();
 
 	/** Called once per displayed frame from Player::MainLoop. */
 	void Tick();
