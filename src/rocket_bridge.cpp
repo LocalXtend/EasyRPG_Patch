@@ -328,7 +328,7 @@ void DumpData(int max_sw, int max_va) {
 std::string Telemetry();
 
 bool CheckpointMapReady() {
-	return OnMap() && !Scene::IsAsyncPending() && !Game_Message::IsMessageActive()
+	return OnMap() && Scene::instance->IsInitialized() && !Scene::IsAsyncPending() && !Game_Message::IsMessageActive()
 		&& !Game_Map::GetInterpreter().IsRunning() && !Main_Data::game_player->IsPendingTeleport()
 		&& !Scene::instance->HasRequestedScene();
 }
